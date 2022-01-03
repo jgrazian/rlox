@@ -1,4 +1,4 @@
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TokenType {
     // Single Characters
     LeftParen,
@@ -24,9 +24,9 @@ pub enum TokenType {
     LessEqual,
 
     // Literals
-    Identifier,
-    String,
-    Number,
+    Identifier(String),
+    String(String),
+    Number(f64),
 
     // Keywords
     And,

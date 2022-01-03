@@ -2,19 +2,18 @@ use std::fmt;
 
 use crate::token_type::TokenType;
 
+#[derive(Debug, Clone)]
 pub struct Token {
     token_type: TokenType,
     lexeme: String,
-    literal: String,
     line: usize,
 }
 
 impl Token {
-    fn new(token_type: TokenType, lexeme: String, literal: String, line: usize) -> Self {
+    pub fn new(token_type: TokenType, lexeme: String, line: usize) -> Self {
         Self {
             token_type,
             lexeme,
-            literal,
             line,
         }
     }
@@ -22,6 +21,6 @@ impl Token {
 
 impl fmt::Display for Token {
     fn fmt(&self, f: &mut fmt::Formatter) -> fmt::Result {
-        write!(f, "{:?} {} {}", self.token_type, self.lexeme, self.literal)
+        write!(f, "{:?} {}", self.token_type, self.lexeme)
     }
 }
