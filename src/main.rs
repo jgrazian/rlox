@@ -6,10 +6,12 @@ use std::io::Write;
 use std::process;
 
 mod generate_ast;
+mod parser;
 mod scanner;
 mod token;
 mod token_type;
 
+use parser::Parser;
 use scanner::Scanner;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -55,9 +57,9 @@ fn run_prompt() -> Result<(), Box<dyn Error>> {
 fn run(source: &str) -> Result<(), Box<dyn Error>> {
     let mut scanner = Scanner::new(source);
     let tokens = scanner.scan_tokens()?;
+    let mut parser = Parser::new(tokens);
+    let expr = parser.parse()?;
 
-    for token in tokens {
-        println!("{}", token);
-    }
+    println!("{:?}", expr);
     Ok(())
 }

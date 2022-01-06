@@ -2,6 +2,14 @@ use crate::token::Token;
 
 use rlox_lib::{impl_new_methods, impl_visitor_methods, make_visitor_methods};
 
+#[derive(Debug, Clone)]
+pub enum Literal {
+    Number(f64),
+    String(String),
+    Boolean(bool),
+    Nil,
+}
+
 macro_rules! define_ast {
     (
         $($base_name:ident {
@@ -59,7 +67,7 @@ define_ast!(
             expression: Box<Expr>
         },
         Literal {
-            value: Token
+            value: Literal
         },
         Unary {
             operator: Token,
