@@ -2,7 +2,7 @@ use crate::token::Token;
 
 use rlox_lib::{impl_new_methods, impl_visitor_methods, make_visitor_methods};
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Literal {
     Number(f64),
     String(String),

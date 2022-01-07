@@ -55,8 +55,9 @@ impl fmt::Display for ParserError {
             "{}",
             self.errors
                 .iter()
-                .map(|e| format!("{}\n", e))
-                .collect::<String>()
+                .map(|e| e.to_string())
+                .collect::<Vec<_>>()
+                .join("\n")
         )
     }
 }

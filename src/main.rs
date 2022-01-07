@@ -6,11 +6,13 @@ use std::io::Write;
 use std::process;
 
 mod generate_ast;
+mod interpreter;
 mod parser;
 mod scanner;
 mod token;
 mod token_type;
 
+use interpreter::Interpreter;
 use parser::Parser;
 use scanner::Scanner;
 
@@ -30,8 +32,14 @@ fn main() -> Result<(), Box<dyn Error>> {
 fn run_file(path: &str) -> Result<(), Box<dyn Error>> {
     let contents = fs::read_to_string(path)?;
 
-    if let Err(_) = run(&contents) {
-        process::exit(65);
+    if let Err(e) = run(&contents) {
+        eprintln!("{}", e);
+        match e.downcast_ref() {
+            Some(e) => match e {
+                interpreter::RuntimeError { .. } => process::exit(70),
+            },
+            None => process::exit(65),
+        }
     }
     Ok(())
 }
@@ -48,7 +56,7 @@ fn run_prompt() -> Result<(), Box<dyn Error>> {
             break;
         }
         if let Err(e) = run(&buffer) {
-            println!("{}", e)
+            eprintln!("{}", e)
         }
     }
     Ok(())
@@ -60,6 +68,11 @@ fn run(source: &str) -> Result<(), Box<dyn Error>> {
     let mut parser = Parser::new(tokens);
     let expr = parser.parse()?;
 
-    println!("{:?}", expr);
+    let mut interpreter = Interpreter {};
+    match interpreter.interpret(&expr) {
+        Ok(res) => println!("{}", res),
+        Err(e) => return Err(Box::new(e)),
+    }
+
     Ok(())
 }
