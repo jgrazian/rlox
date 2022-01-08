@@ -95,6 +95,9 @@ define_ast!(
         }
     },
     Stmt {
+        Block {
+            statements: Vec<Box<Stmt>>
+        },
         Expression {
             expression: Box<Expr>
         },

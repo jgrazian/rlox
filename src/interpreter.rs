@@ -42,6 +42,10 @@ impl AstVisitor for Interpreter {
                 self.enviroment.define(&name.lexeme, value);
                 Ok(Literal::Nil)
             }
+            Stmt::Block { statements } => {
+                self.execute_block(statements, Enviroment::enclosed(self.enviroment.clone()))?;
+                Ok(Literal::Nil)
+            }
         }
     }
 
@@ -149,6 +153,24 @@ impl Interpreter {
 
     fn execute(&mut self, stmt: &Stmt) -> Result<Literal, RuntimeError> {
         stmt.accept(self)
+    }
+
+    fn execute_block(
+        &mut self,
+        statements: &[Box<Stmt>],
+        mut enviroment: Enviroment,
+    ) -> Result<(), RuntimeError> {
+        std::mem::swap(&mut self.enviroment, &mut enviroment);
+
+        for stmt in statements {
+            if let Err(e) = self.execute(stmt) {
+                std::mem::swap(&mut self.enviroment, &mut enviroment);
+                return Err(e);
+            }
+        }
+
+        std::mem::swap(&mut self.enviroment, &mut enviroment);
+        Ok(())
     }
 
     fn is_truthy(&self, value: &Literal) -> bool {
