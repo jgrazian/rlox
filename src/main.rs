@@ -5,7 +5,8 @@ use std::io;
 use std::io::Write;
 use std::process;
 
-mod generate_ast;
+mod ast;
+mod enviroment;
 mod interpreter;
 mod parser;
 mod scanner;
@@ -66,13 +67,11 @@ fn run(source: &str) -> Result<(), Box<dyn Error>> {
     let mut scanner = Scanner::new(source);
     let tokens = scanner.scan_tokens()?;
     let mut parser = Parser::new(tokens);
-    let expr = parser.parse()?;
+    let statements = parser.parse()?;
 
-    let mut interpreter = Interpreter {};
-    match interpreter.interpret(&expr) {
-        Ok(res) => println!("{}", res),
+    let mut interpreter = Interpreter::new();
+    match interpreter.interpret(&statements) {
+        Ok(_) => Ok(()),
         Err(e) => return Err(Box::new(e)),
     }
-
-    Ok(())
 }

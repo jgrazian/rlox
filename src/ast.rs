@@ -1,3 +1,5 @@
+use std::fmt::Display;
+
 use crate::token::Token;
 
 use rlox_lib::{impl_new_methods, impl_visitor_methods, make_visitor_methods};
@@ -8,6 +10,17 @@ pub enum Literal {
     String(String),
     Boolean(bool),
     Nil,
+}
+
+impl Display for Literal {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Literal::Number(n) => write!(f, "{}", n),
+            Literal::String(s) => write!(f, "{}", s),
+            Literal::Boolean(b) => write!(f, "{}", b),
+            Literal::Nil => write!(f, "nil"),
+        }
+    }
 }
 
 macro_rules! define_ast {
@@ -58,6 +71,10 @@ macro_rules! define_ast {
 
 define_ast!(
     Expr {
+        Assign {
+            name: Token,
+            value: Box<Expr>
+        },
         Binary {
             left: Box<Expr>,
             operator: Token,
@@ -72,6 +89,21 @@ define_ast!(
         Unary {
             operator: Token,
             right: Box<Expr>
+        },
+        Variable {
+            name: Token
+        }
+    },
+    Stmt {
+        Expression {
+            expression: Box<Expr>
+        },
+        Print {
+            expression: Box<Expr>
+        },
+        Var {
+            name: Token,
+            initializer: Option<Box<Expr>>
         }
     }
 );

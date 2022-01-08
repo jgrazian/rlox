@@ -1,7 +1,8 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::generate_ast::{AstVisitable, AstVisitor, Expr, Literal};
+use crate::ast::{AstVisitable, AstVisitor, Expr, Literal, Stmt};
+use crate::enviroment::Enviroment;
 use crate::token::Token;
 use crate::token_type::TokenType;
 
@@ -18,10 +19,31 @@ impl fmt::Display for RuntimeError {
     }
 }
 
-pub struct Interpreter {}
+pub struct Interpreter {
+    enviroment: Enviroment,
+}
 
 impl AstVisitor for Interpreter {
     type Result = Result<Literal, RuntimeError>;
+
+    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<Literal, RuntimeError> {
+        match stmt {
+            Stmt::Expression { expression } => self.evaluate(expression),
+            Stmt::Print { expression } => {
+                let value = self.evaluate(expression)?;
+                println!("{}", self.stringify(&value));
+                Ok(Literal::Nil)
+            }
+            Stmt::Var { name, initializer } => {
+                let value = match initializer {
+                    Some(expr) => self.evaluate(expr)?,
+                    None => Literal::Nil,
+                };
+                self.enviroment.define(&name.lexeme, value);
+                Ok(Literal::Nil)
+            }
+        }
+    }
 
     fn visit_expr(&mut self, expr: &Expr) -> Result<Literal, RuntimeError> {
         match expr {
@@ -86,16 +108,30 @@ impl AstVisitor for Interpreter {
                     _ => unimplemented!(),
                 }
             }
+            Expr::Variable { name } => self.enviroment.get(name),
+            Expr::Assign { name, value } => {
+                let value = self.evaluate(value)?;
+                self.enviroment.assign(&name, value.clone())?;
+                Ok(value)
+            }
         }
     }
 }
 
 impl Interpreter {
-    pub fn interpret(&mut self, expression: &Expr) -> Result<String, RuntimeError> {
-        match self.evaluate(expression) {
-            Ok(v) => Ok(self.stringify(&v)),
-            Err(e) => Err(e),
+    pub fn new() -> Self {
+        Self {
+            enviroment: Enviroment::new(),
         }
+    }
+
+    pub fn interpret(&mut self, statements: &Vec<Box<Stmt>>) -> Result<(), RuntimeError> {
+        for stmt in statements {
+            if let Err(e) = self.execute(stmt) {
+                return Err(e);
+            }
+        }
+        Ok(())
     }
 
     fn stringify(&self, value: &Literal) -> String {
@@ -109,6 +145,10 @@ impl Interpreter {
 
     fn evaluate(&mut self, expr: &Expr) -> Result<Literal, RuntimeError> {
         expr.accept(self)
+    }
+
+    fn execute(&mut self, stmt: &Stmt) -> Result<Literal, RuntimeError> {
+        stmt.accept(self)
     }
 
     fn is_truthy(&self, value: &Literal) -> bool {

@@ -1,7 +1,7 @@
 use std::error::Error;
 use std::fmt;
 
-use crate::generate_ast::*;
+use crate::ast::*;
 use crate::token::Token;
 use crate::token_type::TokenType;
 
@@ -72,19 +72,107 @@ impl Parser {
         Self { tokens, current: 0 }
     }
 
-    pub fn parse(&mut self) -> Result<Box<Expr>, ParserError> {
+    pub fn parse(&mut self) -> Result<Vec<Box<Stmt>>, ParserError> {
         let mut errors = ParserError::new();
-        match self.expression() {
-            Ok(expr) => Ok(expr),
-            Err(e) => {
-                errors.push(e);
-                Err(errors)
+        let mut statements = Vec::new();
+
+        while !self.is_at_end() {
+            match self.statement() {
+                Ok(expr) => statements.push(expr),
+                Err(e) => errors.push(e),
             }
+        }
+
+        if errors.errors.is_empty() {
+            Ok(statements)
+        } else {
+            Err(errors)
         }
     }
 
     fn expression(&mut self) -> Result<Box<Expr>, ParseError> {
-        self.equality()
+        self.assignment()
+    }
+
+    fn statement(&mut self) -> Result<Box<Stmt>, ParseError> {
+        if self.match_token(&[TokenType::Print]) {
+            self.print_statement()
+        } else {
+            self.expression_statement()
+        }
+    }
+
+    fn declaration(&mut self) -> Result<Box<Stmt>, ParseError> {
+        let res = if self.match_token(&[TokenType::Var]) {
+            self.var_declaration()
+        } else {
+            self.statement()
+        };
+        match res {
+            Ok(stmt) => Ok(stmt),
+            Err(e) => {
+                self.synchronize();
+                Err(e)
+            }
+        }
+    }
+
+    fn print_statement(&mut self) -> Result<Box<Stmt>, ParseError> {
+        let value = self.expression()?;
+        self.consume(TokenType::Semicolon, "Expect ';' after value.")?;
+        Ok(Box::new(Stmt::Print { expression: value }))
+    }
+
+    fn var_declaration(&mut self) -> Result<Box<Stmt>, ParseError> {
+        let name = self
+            .consume(
+                TokenType::Identifier("".to_string()),
+                "Expect variable name.",
+            )?
+            .clone();
+        let initializer = if self.match_token(&[TokenType::Equal]) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(
+            TokenType::Semicolon,
+            "Expect ';' after variable declaration.",
+        )?;
+        Ok(Box::new(Stmt::Var { name, initializer }))
+    }
+
+    fn expression_statement(&mut self) -> Result<Box<Stmt>, ParseError> {
+        let expr = self.expression()?;
+        self.consume(TokenType::Semicolon, "Expect ';' after expression.")?;
+        Ok(Box::new(Stmt::Expression { expression: expr }))
+    }
+
+    fn assignment(&mut self) -> Result<Box<Expr>, ParseError> {
+        let expr = self.equality();
+
+        if self.match_token(&[TokenType::Equal]) {
+            let equals = self.previous().clone();
+            let value = self.assignment()?;
+
+            match expr {
+                Ok(expr) => {
+                    if let Expr::Variable { name } = *expr {
+                        return Ok(Box::new(Expr::Assign {
+                            name: name.clone(),
+                            value,
+                        }));
+                    }
+                }
+                Err(e) => return Err(e),
+            };
+
+            return Err(ParseError::new(
+                equals,
+                "Invalid assignment target.".to_string(),
+            ));
+        }
+        expr
     }
 
     fn equality(&mut self) -> Result<Box<Expr>, ParseError> {
@@ -203,6 +291,11 @@ impl Parser {
             let expr = self.expression()?;
             self.consume(TokenType::RightParen, "Expect ')' after expression.")?;
             return Ok(expr);
+        }
+        if self.match_token(&[TokenType::Identifier("".to_string())]) {
+            return Ok(Box::new(Expr::Variable {
+                name: self.previous().clone(),
+            }));
         }
         Err(ParseError::new(
             self.peek().clone(),
