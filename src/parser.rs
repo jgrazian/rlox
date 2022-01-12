@@ -152,7 +152,7 @@ impl Parser {
 
         if condition.is_none() {
             condition = Some(Box::new(Expr::Literal {
-                value: Literal::Boolean(true),
+                value: LoxObject::Boolean(true),
             }));
         }
         body = Box::new(Stmt::While {
@@ -384,29 +384,65 @@ impl Parser {
             let right = self.unary()?;
             return Ok(Box::new(Expr::Unary { operator, right }));
         }
-        self.primary()
+        self.call()
+    }
+
+    fn call(&mut self) -> Result<Box<Expr>, ParseError> {
+        let mut expr = self.primary()?;
+
+        while self.match_token(&[TokenType::LeftParen]) {
+            expr = self.finish_call(expr)?;
+        }
+        Ok(expr)
+    }
+
+    fn finish_call(&mut self, callee: Box<Expr>) -> Result<Box<Expr>, ParseError> {
+        let mut arguments = Vec::new();
+
+        if !self.check(&TokenType::RightParen) {
+            loop {
+                if arguments.len() >= 255 {
+                    return Err(ParseError {
+                        token: self.peek().clone(),
+                        message: "Can't have more than 255 arguments.".to_string(),
+                    });
+                }
+
+                arguments.push(self.expression()?);
+                if !self.match_token(&[TokenType::Comma]) {
+                    break;
+                }
+            }
+        }
+        let paren = self.consume(TokenType::RightParen, "Expect ')' after arguments.")?;
+
+        Ok(Box::new(Expr::Call {
+            callee,
+            paren: paren.clone(),
+            arguments,
+        }))
     }
 
     fn primary(&mut self) -> Result<Box<Expr>, ParseError> {
         if self.match_token(&[TokenType::False]) {
             return Ok(Box::new(Expr::Literal {
-                value: Literal::Boolean(false),
+                value: LoxObject::Boolean(false),
             }));
         }
         if self.match_token(&[TokenType::True]) {
             return Ok(Box::new(Expr::Literal {
-                value: Literal::Boolean(true),
+                value: LoxObject::Boolean(true),
             }));
         }
         if self.match_token(&[TokenType::Nil]) {
             return Ok(Box::new(Expr::Literal {
-                value: Literal::Nil,
+                value: LoxObject::Nil,
             }));
         }
         if self.match_token(&[TokenType::Number(0.0)]) {
             if let TokenType::Number(value) = self.previous().token_type {
                 return Ok(Box::new(Expr::Literal {
-                    value: Literal::Number(value),
+                    value: LoxObject::Number(value),
                 }));
             }
             return Err(ParseError::new(
@@ -417,7 +453,7 @@ impl Parser {
         if self.match_token(&[TokenType::String("".to_string())]) {
             if let TokenType::String(value) = &self.previous().token_type {
                 return Ok(Box::new(Expr::Literal {
-                    value: Literal::String(value.to_string()),
+                    value: LoxObject::String(value.to_string()),
                 }));
             }
             return Err(ParseError::new(

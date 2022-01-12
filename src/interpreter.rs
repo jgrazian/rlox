@@ -3,7 +3,8 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
-use crate::ast::{AstVisitable, AstVisitor, Expr, Literal, Stmt};
+use crate::ast::{AstVisitable, AstVisitor, Expr, LoxObject, Stmt};
+use crate::callable::Clock;
 use crate::enviroment::Enviroment;
 use crate::token::Token;
 use crate::token_type::TokenType;
@@ -26,9 +27,9 @@ pub struct Interpreter {
 }
 
 impl AstVisitor for Interpreter {
-    type Result = Result<Literal, RuntimeError>;
+    type Result = Result<LoxObject, RuntimeError>;
 
-    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<Literal, RuntimeError> {
+    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<LoxObject, RuntimeError> {
         match stmt {
             Stmt::Expression { expression } => self.evaluate(expression),
             Stmt::If {
@@ -42,12 +43,12 @@ impl AstVisitor for Interpreter {
                 } else if let Some(else_branch) = else_branch {
                     self.execute(else_branch)?;
                 }
-                Ok(Literal::Nil)
+                Ok(LoxObject::Nil)
             }
             Stmt::Print { expression } => {
                 let value = self.evaluate(expression)?;
                 println!("{}", self.stringify(&value));
-                Ok(Literal::Nil)
+                Ok(LoxObject::Nil)
             }
             Stmt::While { condition, body } => {
                 let mut _condition = self.evaluate(condition)?;
@@ -56,24 +57,24 @@ impl AstVisitor for Interpreter {
                     self.execute(body)?;
                     _condition = self.evaluate(condition)?;
                 }
-                Ok(Literal::Nil)
+                Ok(LoxObject::Nil)
             }
             Stmt::Var { name, initializer } => {
                 let value = match initializer {
                     Some(expr) => self.evaluate(expr)?,
-                    None => Literal::Nil,
+                    None => LoxObject::Nil,
                 };
                 self.enviroment.borrow_mut().define(&name.lexeme, value);
-                Ok(Literal::Nil)
+                Ok(LoxObject::Nil)
             }
             Stmt::Block { statements } => {
                 self.execute_block(statements, Enviroment::enclosed(self.enviroment.clone()))?;
-                Ok(Literal::Nil)
+                Ok(LoxObject::Nil)
             }
         }
     }
 
-    fn visit_expr(&mut self, expr: &Expr) -> Result<Literal, RuntimeError> {
+    fn visit_expr(&mut self, expr: &Expr) -> Result<LoxObject, RuntimeError> {
         match expr {
             Expr::Literal { value } => Ok(value.clone()),
             Expr::Logical {
@@ -99,8 +100,8 @@ impl AstVisitor for Interpreter {
                 let right = self.evaluate(right)?;
 
                 match operator.token_type {
-                    TokenType::Minus => Ok(Literal::Number(-number(operator, &right)?)),
-                    TokenType::Bang => return Ok(Literal::Boolean(!self.is_truthy(&right))),
+                    TokenType::Minus => Ok(LoxObject::Number(-number(operator, &right)?)),
+                    TokenType::Bang => return Ok(LoxObject::Boolean(!self.is_truthy(&right))),
                     _ => unimplemented!(),
                 }
             }
@@ -113,29 +114,29 @@ impl AstVisitor for Interpreter {
                 let right = self.evaluate(right)?;
 
                 match operator.token_type {
-                    TokenType::Greater => Ok(Literal::Boolean(
+                    TokenType::Greater => Ok(LoxObject::Boolean(
                         number(operator, &left)? > number(operator, &right)?,
                     )),
-                    TokenType::GreaterEqual => Ok(Literal::Boolean(
+                    TokenType::GreaterEqual => Ok(LoxObject::Boolean(
                         number(operator, &left)? >= number(operator, &right)?,
                     )),
-                    TokenType::Less => Ok(Literal::Boolean(
+                    TokenType::Less => Ok(LoxObject::Boolean(
                         number(operator, &left)? < number(operator, &right)?,
                     )),
-                    TokenType::LessEqual => Ok(Literal::Boolean(
+                    TokenType::LessEqual => Ok(LoxObject::Boolean(
                         number(operator, &left)? <= number(operator, &right)?,
                     )),
-                    TokenType::BangEqual => return Ok(Literal::Boolean(left != right)),
-                    TokenType::EqualEqual => return Ok(Literal::Boolean(left == right)),
-                    TokenType::Minus => Ok(Literal::Number(
+                    TokenType::BangEqual => return Ok(LoxObject::Boolean(left != right)),
+                    TokenType::EqualEqual => return Ok(LoxObject::Boolean(left == right)),
+                    TokenType::Minus => Ok(LoxObject::Number(
                         number(operator, &left)? - number(operator, &right)?,
                     )),
                     TokenType::Plus => match (&left, &right) {
-                        (Literal::String(left), Literal::String(right)) => {
-                            Ok(Literal::String(left.to_string() + &right))
+                        (LoxObject::String(left), LoxObject::String(right)) => {
+                            Ok(LoxObject::String(left.to_string() + &right))
                         }
-                        (Literal::Number(left), Literal::Number(right)) => {
-                            Ok(Literal::Number(left + right))
+                        (LoxObject::Number(left), LoxObject::Number(right)) => {
+                            Ok(LoxObject::Number(left + right))
                         }
                         _ => Err(RuntimeError {
                             message: format!(
@@ -145,14 +146,47 @@ impl AstVisitor for Interpreter {
                             token: operator.clone(),
                         }),
                     },
-                    TokenType::Slash => Ok(Literal::Number(
+                    TokenType::Slash => Ok(LoxObject::Number(
                         number(operator, &left)? / number(operator, &right)?,
                     )),
-                    TokenType::Star => Ok(Literal::Number(
+                    TokenType::Star => Ok(LoxObject::Number(
                         number(operator, &left)? * number(operator, &right)?,
                     )),
                     _ => unimplemented!(),
                 }
+            }
+            Expr::Call {
+                callee,
+                paren,
+                arguments,
+            } => {
+                let callee = self.evaluate(callee)?;
+
+                let mut args = Vec::new();
+                for arg in arguments {
+                    args.push(self.evaluate(arg)?);
+                }
+
+                let function = match &callee {
+                    LoxObject::Callable(callable) => callable,
+                    _ => {
+                        return Err(RuntimeError {
+                            message: format!("Can't call non-callable {:?}", callee),
+                            token: paren.clone(),
+                        })
+                    }
+                };
+                if function.arity() != args.len() {
+                    return Err(RuntimeError {
+                        message: format!(
+                            "Expected {} arguments found {}",
+                            function.arity(),
+                            args.len()
+                        ),
+                        token: paren.clone(),
+                    });
+                }
+                function.call(self, args)
             }
             Expr::Variable { name } => self.enviroment.borrow().get(name),
             Expr::Assign { name, value } => {
@@ -166,8 +200,11 @@ impl AstVisitor for Interpreter {
 
 impl Interpreter {
     pub fn new() -> Self {
+        let mut globals = Enviroment::new();
+        globals.define("clock", LoxObject::Callable(Rc::new(Box::new(Clock {}))));
+
         Self {
-            enviroment: Rc::new(RefCell::new(Enviroment::new())),
+            enviroment: Rc::new(RefCell::new(globals)),
         }
     }
 
@@ -180,20 +217,21 @@ impl Interpreter {
         Ok(())
     }
 
-    fn stringify(&self, value: &Literal) -> String {
+    fn stringify(&self, value: &LoxObject) -> String {
         match value {
-            Literal::String(s) => s.clone(),
-            Literal::Number(n) => n.to_string(),
-            Literal::Boolean(b) => b.to_string(),
-            Literal::Nil => "nil".to_string(),
+            LoxObject::String(s) => s.clone(),
+            LoxObject::Number(n) => n.to_string(),
+            LoxObject::Boolean(b) => b.to_string(),
+            LoxObject::Callable(_) => "callable".to_string(),
+            LoxObject::Nil => "nil".to_string(),
         }
     }
 
-    fn evaluate(&mut self, expr: &Expr) -> Result<Literal, RuntimeError> {
+    fn evaluate(&mut self, expr: &Expr) -> Result<LoxObject, RuntimeError> {
         expr.accept(self)
     }
 
-    fn execute(&mut self, stmt: &Stmt) -> Result<Literal, RuntimeError> {
+    fn execute(&mut self, stmt: &Stmt) -> Result<LoxObject, RuntimeError> {
         stmt.accept(self)
     }
 
@@ -216,18 +254,18 @@ impl Interpreter {
         Ok(())
     }
 
-    fn is_truthy(&self, value: &Literal) -> bool {
+    fn is_truthy(&self, value: &LoxObject) -> bool {
         match value {
-            Literal::Nil => false,
-            Literal::Boolean(value) => *value,
+            LoxObject::Nil => false,
+            LoxObject::Boolean(value) => *value,
             _ => true,
         }
     }
 }
 
-fn number(operator: &Token, literal: &Literal) -> Result<f64, RuntimeError> {
+fn number(operator: &Token, literal: &LoxObject) -> Result<f64, RuntimeError> {
     match literal {
-        Literal::Number(value) => Ok(*value),
+        LoxObject::Number(value) => Ok(*value),
         _ => Err(RuntimeError {
             message: format!("Expected number found {:?}", literal),
             token: operator.clone(),

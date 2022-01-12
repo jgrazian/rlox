@@ -2,13 +2,13 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
-use crate::ast::Literal;
+use crate::ast::LoxObject;
 use crate::interpreter::RuntimeError;
 use crate::token::Token;
 
 #[derive(Debug, Clone)]
 pub struct Enviroment {
-    values: HashMap<String, Literal>,
+    values: HashMap<String, LoxObject>,
     pub enclosing: Option<Rc<RefCell<Enviroment>>>,
 }
 
@@ -27,11 +27,11 @@ impl Enviroment {
         }
     }
 
-    pub fn define(&mut self, name: &str, value: Literal) {
+    pub fn define(&mut self, name: &str, value: LoxObject) {
         self.values.insert(name.to_string(), value);
     }
 
-    pub fn get(&self, name: &Token) -> Result<Literal, RuntimeError> {
+    pub fn get(&self, name: &Token) -> Result<LoxObject, RuntimeError> {
         match self.values.get(&name.lexeme) {
             Some(value) => Ok(value.clone()),
             None => match &self.enclosing {
@@ -44,7 +44,7 @@ impl Enviroment {
         }
     }
 
-    pub fn assign(&mut self, name: &Token, value: Literal) -> Result<(), RuntimeError> {
+    pub fn assign(&mut self, name: &Token, value: LoxObject) -> Result<(), RuntimeError> {
         match self.values.get_mut(&name.lexeme) {
             Some(_value) => {
                 *_value = value.clone();

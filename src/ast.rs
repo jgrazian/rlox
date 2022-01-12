@@ -1,24 +1,62 @@
 use std::fmt::Display;
+use std::rc::Rc;
 
+use crate::callable::LoxCallable;
 use crate::token::Token;
 
 use rlox_lib::{impl_new_methods, impl_visitor_methods, make_visitor_methods};
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum Literal {
+#[derive(Debug)]
+pub enum LoxObject {
     Number(f64),
     String(String),
     Boolean(bool),
+    Callable(Rc<Box<dyn LoxCallable>>),
     Nil,
 }
 
-impl Display for Literal {
+impl Display for LoxObject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            Literal::Number(n) => write!(f, "{}", n),
-            Literal::String(s) => write!(f, "{}", s),
-            Literal::Boolean(b) => write!(f, "{}", b),
-            Literal::Nil => write!(f, "nil"),
+            LoxObject::Number(n) => write!(f, "{}", n),
+            LoxObject::String(s) => write!(f, "{}", s),
+            LoxObject::Boolean(b) => write!(f, "{}", b),
+            LoxObject::Callable(_) => write!(f, "callable"),
+            LoxObject::Nil => write!(f, "nil"),
+        }
+    }
+}
+
+impl Clone for LoxObject {
+    fn clone(&self) -> Self {
+        match self {
+            LoxObject::Number(n) => LoxObject::Number(*n),
+            LoxObject::String(s) => LoxObject::String(s.clone()),
+            LoxObject::Boolean(b) => LoxObject::Boolean(*b),
+            LoxObject::Callable(c) => LoxObject::Callable(c.clone()),
+            LoxObject::Nil => LoxObject::Nil,
+        }
+    }
+}
+
+impl PartialEq for LoxObject {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (LoxObject::Number(n1), LoxObject::Number(n2)) => n1 == n2,
+            (LoxObject::String(s1), LoxObject::String(s2)) => s1 == s2,
+            (LoxObject::Boolean(b1), LoxObject::Boolean(b2)) => b1 == b2,
+            (LoxObject::Callable(_), LoxObject::Callable(_)) => false,
+            (LoxObject::Nil, LoxObject::Nil) => true,
+            _ => false,
+        }
+    }
+}
+
+impl LoxObject {
+    fn is_callable(&self) -> bool {
+        match self {
+            LoxObject::Callable(_) => true,
+            _ => false,
         }
     }
 }
@@ -80,11 +118,16 @@ define_ast!(
             operator: Token,
             right: Box<Expr>
         },
+        Call {
+            callee: Box<Expr>,
+            paren: Token,
+            arguments: Vec<Box<Expr>>
+        },
         Grouping {
             expression: Box<Expr>
         },
         Literal {
-            value: Literal
+            value: LoxObject
         },
         Logical {
             left: Box<Expr>,
