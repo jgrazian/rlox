@@ -86,6 +86,11 @@ define_ast!(
         Literal {
             value: Literal
         },
+        Logical {
+            left: Box<Expr>,
+            operator: Token,
+            right: Box<Expr>
+        },
         Unary {
             operator: Token,
             right: Box<Expr>
@@ -101,12 +106,21 @@ define_ast!(
         Expression {
             expression: Box<Expr>
         },
+        If {
+            condition: Box<Expr>,
+            then_branch: Box<Stmt>,
+            else_branch: Option<Box<Stmt>>
+        },
         Print {
             expression: Box<Expr>
         },
         Var {
             name: Token,
             initializer: Option<Box<Expr>>
+        },
+        While {
+            condition: Box<Expr>,
+            body: Box<Stmt>
         }
     }
 );

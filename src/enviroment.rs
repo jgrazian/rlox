@@ -1,4 +1,6 @@
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 use crate::ast::Literal;
 use crate::interpreter::RuntimeError;
@@ -7,7 +9,7 @@ use crate::token::Token;
 #[derive(Debug, Clone)]
 pub struct Enviroment {
     values: HashMap<String, Literal>,
-    enclosing: Option<Box<Enviroment>>,
+    pub enclosing: Option<Rc<RefCell<Enviroment>>>,
 }
 
 impl Enviroment {
@@ -18,10 +20,10 @@ impl Enviroment {
         }
     }
 
-    pub fn enclosed(enclosing: Enviroment) -> Self {
+    pub fn enclosed(enclosing: Rc<RefCell<Enviroment>>) -> Self {
         Self {
             values: HashMap::new(),
-            enclosing: Some(Box::new(enclosing)),
+            enclosing: Some(enclosing),
         }
     }
 
@@ -33,7 +35,7 @@ impl Enviroment {
         match self.values.get(&name.lexeme) {
             Some(value) => Ok(value.clone()),
             None => match &self.enclosing {
-                Some(enclosed) => enclosed.get(name),
+                Some(enclosed) => enclosed.borrow().get(name),
                 None => Err(RuntimeError {
                     token: name.clone(),
                     message: format!("Undefined variable '{}'.", name),
@@ -48,8 +50,11 @@ impl Enviroment {
                 *_value = value.clone();
                 Ok(())
             }
-            None => match self.enclosing {
-                Some(ref mut enclosed) => enclosed.assign(name, value),
+            None => match &self.enclosing {
+                Some(enclosed) => {
+                    enclosed.borrow_mut().assign(name, value)?;
+                    Ok(())
+                }
                 None => Err(RuntimeError {
                     token: name.clone(),
                     message: format!("Undefined variable '{}'.", name),

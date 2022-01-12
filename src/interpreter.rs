@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::error::Error;
 use std::fmt;
+use std::rc::Rc;
 
 use crate::ast::{AstVisitable, AstVisitor, Expr, Literal, Stmt};
 use crate::enviroment::Enviroment;
@@ -20,7 +22,7 @@ impl fmt::Display for RuntimeError {
 }
 
 pub struct Interpreter {
-    enviroment: Enviroment,
+    enviroment: Rc<RefCell<Enviroment>>,
 }
 
 impl AstVisitor for Interpreter {
@@ -29,9 +31,31 @@ impl AstVisitor for Interpreter {
     fn visit_stmt(&mut self, stmt: &Stmt) -> Result<Literal, RuntimeError> {
         match stmt {
             Stmt::Expression { expression } => self.evaluate(expression),
+            Stmt::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => {
+                let condition = &self.evaluate(condition)?;
+                if self.is_truthy(condition) {
+                    self.execute(then_branch)?;
+                } else if let Some(else_branch) = else_branch {
+                    self.execute(else_branch)?;
+                }
+                Ok(Literal::Nil)
+            }
             Stmt::Print { expression } => {
                 let value = self.evaluate(expression)?;
                 println!("{}", self.stringify(&value));
+                Ok(Literal::Nil)
+            }
+            Stmt::While { condition, body } => {
+                let mut _condition = self.evaluate(condition)?;
+
+                while self.is_truthy(&_condition) {
+                    self.execute(body)?;
+                    _condition = self.evaluate(condition)?;
+                }
                 Ok(Literal::Nil)
             }
             Stmt::Var { name, initializer } => {
@@ -39,7 +63,7 @@ impl AstVisitor for Interpreter {
                     Some(expr) => self.evaluate(expr)?,
                     None => Literal::Nil,
                 };
-                self.enviroment.define(&name.lexeme, value);
+                self.enviroment.borrow_mut().define(&name.lexeme, value);
                 Ok(Literal::Nil)
             }
             Stmt::Block { statements } => {
@@ -52,6 +76,24 @@ impl AstVisitor for Interpreter {
     fn visit_expr(&mut self, expr: &Expr) -> Result<Literal, RuntimeError> {
         match expr {
             Expr::Literal { value } => Ok(value.clone()),
+            Expr::Logical {
+                left,
+                operator,
+                right,
+            } => {
+                let left = self.evaluate(left)?;
+
+                if operator.token_type == TokenType::Or {
+                    if self.is_truthy(&left) {
+                        return Ok(left);
+                    }
+                } else {
+                    if !self.is_truthy(&left) {
+                        return Ok(left);
+                    }
+                }
+                self.evaluate(right)
+            }
             Expr::Grouping { expression } => Ok(self.evaluate(expression)?),
             Expr::Unary { operator, right } => {
                 let right = self.evaluate(right)?;
@@ -112,10 +154,10 @@ impl AstVisitor for Interpreter {
                     _ => unimplemented!(),
                 }
             }
-            Expr::Variable { name } => self.enviroment.get(name),
+            Expr::Variable { name } => self.enviroment.borrow().get(name),
             Expr::Assign { name, value } => {
                 let value = self.evaluate(value)?;
-                self.enviroment.assign(&name, value.clone())?;
+                self.enviroment.borrow_mut().assign(&name, value.clone())?;
                 Ok(value)
             }
         }
@@ -125,7 +167,7 @@ impl AstVisitor for Interpreter {
 impl Interpreter {
     pub fn new() -> Self {
         Self {
-            enviroment: Enviroment::new(),
+            enviroment: Rc::new(RefCell::new(Enviroment::new())),
         }
     }
 
@@ -158,18 +200,19 @@ impl Interpreter {
     fn execute_block(
         &mut self,
         statements: &[Box<Stmt>],
-        mut enviroment: Enviroment,
+        enviroment: Enviroment,
     ) -> Result<(), RuntimeError> {
-        std::mem::swap(&mut self.enviroment, &mut enviroment);
+        let previous = self.enviroment.clone();
+        self.enviroment = Rc::new(RefCell::new(enviroment));
 
         for stmt in statements {
             if let Err(e) = self.execute(stmt) {
-                std::mem::swap(&mut self.enviroment, &mut enviroment);
+                self.enviroment = previous;
                 return Err(e);
             }
         }
 
-        std::mem::swap(&mut self.enviroment, &mut enviroment);
+        self.enviroment = previous;
         Ok(())
     }
 

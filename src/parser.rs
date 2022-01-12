@@ -95,13 +95,118 @@ impl Parser {
     }
 
     fn statement(&mut self) -> Result<Box<Stmt>, ParseError> {
+        if self.match_token(&[TokenType::For]) {
+            return self.for_statement();
+        }
+        if self.match_token(&[TokenType::If]) {
+            return self.if_statement();
+        }
         if self.match_token(&[TokenType::Print]) {
             return self.print_statement();
+        }
+        if self.match_token(&[TokenType::While]) {
+            return self.while_statement();
         }
         if self.match_token(&[TokenType::LeftBrace]) {
             return self.block();
         }
         self.expression_statement()
+    }
+
+    fn for_statement(&mut self) -> Result<Box<Stmt>, ParseError> {
+        self.consume(TokenType::LeftParen, "Expect '(' after 'for'.")?;
+        let initializer = if self.match_token(&[TokenType::Semicolon]) {
+            None
+        } else if self.match_token(&[TokenType::Var]) {
+            Some(self.var_declaration()?)
+        } else {
+            Some(self.expression_statement()?)
+        };
+
+        let mut condition = if !self.check(&TokenType::Semicolon) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(TokenType::Semicolon, "Expect ';' after loop condition.")?;
+
+        let increment = if !self.check(&TokenType::RightParen) {
+            Some(self.expression()?)
+        } else {
+            None
+        };
+        self.consume(TokenType::RightParen, "Expect ')' after for clauses.")?;
+
+        let mut body = self.statement()?;
+
+        if let Some(increment) = increment {
+            body = Box::new(Stmt::Block {
+                statements: vec![
+                    body,
+                    Box::new(Stmt::Expression {
+                        expression: increment,
+                    }),
+                ],
+            });
+        };
+
+        if condition.is_none() {
+            condition = Some(Box::new(Expr::Literal {
+                value: Literal::Boolean(true),
+            }));
+        }
+        body = Box::new(Stmt::While {
+            condition: condition.unwrap(),
+            body,
+        });
+
+        if let Some(initializer) = initializer {
+            body = Box::new(Stmt::Block {
+                statements: vec![initializer, body],
+            });
+        }
+        Ok(body)
+    }
+
+    fn if_statement(&mut self) -> Result<Box<Stmt>, ParseError> {
+        self.consume(TokenType::LeftParen, "Expect '(' after 'if'.")?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RightParen, "Expect ')' after if condition.")?;
+
+        let then_branch = self.statement()?;
+        let else_branch = if self.match_token(&[TokenType::Else]) {
+            Some(self.statement()?)
+        } else {
+            None
+        };
+
+        Ok(Box::new(Stmt::If {
+            condition,
+            then_branch,
+            else_branch,
+        }))
+    }
+
+    fn print_statement(&mut self) -> Result<Box<Stmt>, ParseError> {
+        let value = self.expression()?;
+        self.consume(TokenType::Semicolon, "Expect ';' after value.")?;
+        Ok(Box::new(Stmt::Print { expression: value }))
+    }
+
+    fn while_statement(&mut self) -> Result<Box<Stmt>, ParseError> {
+        self.consume(TokenType::LeftParen, "Expect '(' after 'while'.")?;
+        let condition = self.expression()?;
+        self.consume(TokenType::RightParen, "Expect ')' after condition.")?;
+
+        let body = self.statement()?;
+
+        Ok(Box::new(Stmt::While { condition, body }))
+    }
+
+    fn expression_statement(&mut self) -> Result<Box<Stmt>, ParseError> {
+        let expr = self.expression()?;
+        self.consume(TokenType::Semicolon, "Expect ';' after expression.")?;
+        Ok(Box::new(Stmt::Expression { expression: expr }))
     }
 
     fn declaration(&mut self) -> Result<Box<Stmt>, ParseError> {
@@ -117,12 +222,6 @@ impl Parser {
                 Err(e)
             }
         }
-    }
-
-    fn print_statement(&mut self) -> Result<Box<Stmt>, ParseError> {
-        let value = self.expression()?;
-        self.consume(TokenType::Semicolon, "Expect ';' after value.")?;
-        Ok(Box::new(Stmt::Print { expression: value }))
     }
 
     fn var_declaration(&mut self) -> Result<Box<Stmt>, ParseError> {
@@ -144,12 +243,6 @@ impl Parser {
         Ok(Box::new(Stmt::Var { name, initializer }))
     }
 
-    fn expression_statement(&mut self) -> Result<Box<Stmt>, ParseError> {
-        let expr = self.expression()?;
-        self.consume(TokenType::Semicolon, "Expect ';' after expression.")?;
-        Ok(Box::new(Stmt::Expression { expression: expr }))
-    }
-
     fn block(&mut self) -> Result<Box<Stmt>, ParseError> {
         let mut statements = Vec::new();
 
@@ -162,7 +255,7 @@ impl Parser {
     }
 
     fn assignment(&mut self) -> Result<Box<Expr>, ParseError> {
-        let expr = self.equality();
+        let expr = self.or();
 
         if self.match_token(&[TokenType::Equal]) {
             let equals = self.previous().clone();
@@ -184,6 +277,38 @@ impl Parser {
                 equals,
                 "Invalid assignment target.".to_string(),
             ));
+        }
+        expr
+    }
+
+    fn or(&mut self) -> Result<Box<Expr>, ParseError> {
+        let mut expr = self.and();
+
+        while self.match_token(&[TokenType::Or]) {
+            let operator = self.previous().clone();
+            let right = self.and()?;
+
+            expr = Ok(Box::new(Expr::Logical {
+                left: expr?,
+                operator: operator.clone(),
+                right,
+            }));
+        }
+        expr
+    }
+
+    fn and(&mut self) -> Result<Box<Expr>, ParseError> {
+        let mut expr = self.equality();
+
+        while self.match_token(&[TokenType::And]) {
+            let operator = self.previous().clone();
+            let right = self.equality()?;
+
+            expr = Ok(Box::new(Expr::Logical {
+                left: expr?,
+                operator: operator.clone(),
+                right,
+            }));
         }
         expr
     }
