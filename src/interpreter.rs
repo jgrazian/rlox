@@ -4,7 +4,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::ast::{AstVisitable, AstVisitor, Expr, LoxObject, Stmt};
-use crate::callable::Clock;
+use crate::callable::{Clock, LoxCallable, LoxFunction};
 use crate::enviroment::Enviroment;
 use crate::token::Token;
 use crate::token_type::TokenType;
@@ -23,15 +23,24 @@ impl fmt::Display for RuntimeError {
 }
 
 pub struct Interpreter {
-    enviroment: Rc<RefCell<Enviroment>>,
+    pub globals: Rc<RefCell<Enviroment>>,
+    pub enviroment: Rc<RefCell<Enviroment>>,
 }
 
 impl AstVisitor for Interpreter {
     type Result = Result<LoxObject, RuntimeError>;
 
     fn visit_stmt(&mut self, stmt: &Stmt) -> Result<LoxObject, RuntimeError> {
-        match stmt {
+        match &stmt {
             Stmt::Expression { expression } => self.evaluate(expression),
+            Stmt::Function { name, .. } => {
+                let fun: Box<dyn LoxCallable> = Box::new(LoxFunction::new(Box::new(stmt.clone())));
+                let func = Rc::new(fun);
+                self.enviroment
+                    .borrow_mut()
+                    .define(&name.lexeme, LoxObject::Callable(func.clone()));
+                Ok(LoxObject::Nil)
+            }
             Stmt::If {
                 condition,
                 then_branch,
@@ -39,9 +48,15 @@ impl AstVisitor for Interpreter {
             } => {
                 let condition = &self.evaluate(condition)?;
                 if self.is_truthy(condition) {
-                    self.execute(then_branch)?;
+                    match self.execute(then_branch)? {
+                        LoxObject::Return(o) => return Ok(LoxObject::Return(o)),
+                        _ => (),
+                    }
                 } else if let Some(else_branch) = else_branch {
-                    self.execute(else_branch)?;
+                    match self.execute(else_branch)? {
+                        LoxObject::Return(o) => return Ok(LoxObject::Return(o)),
+                        _ => (),
+                    }
                 }
                 Ok(LoxObject::Nil)
             }
@@ -50,11 +65,21 @@ impl AstVisitor for Interpreter {
                 println!("{}", self.stringify(&value));
                 Ok(LoxObject::Nil)
             }
+            Stmt::Return { value, .. } => {
+                if let Some(value) = value {
+                    Ok(LoxObject::Return(Box::new(self.evaluate(value)?)))
+                } else {
+                    Ok(LoxObject::Nil)
+                }
+            }
             Stmt::While { condition, body } => {
                 let mut _condition = self.evaluate(condition)?;
 
                 while self.is_truthy(&_condition) {
-                    self.execute(body)?;
+                    match self.execute(body)? {
+                        LoxObject::Return(o) => return Ok(LoxObject::Return(o)),
+                        _ => (),
+                    }
                     _condition = self.evaluate(condition)?;
                 }
                 Ok(LoxObject::Nil)
@@ -68,8 +93,12 @@ impl AstVisitor for Interpreter {
                 Ok(LoxObject::Nil)
             }
             Stmt::Block { statements } => {
-                self.execute_block(statements, Enviroment::enclosed(self.enviroment.clone()))?;
-                Ok(LoxObject::Nil)
+                match self
+                    .execute_block(statements, Enviroment::enclosed(self.enviroment.clone()))?
+                {
+                    LoxObject::Return(o) => Ok(LoxObject::Return(o)),
+                    _ => Ok(LoxObject::Nil),
+                }
             }
         }
     }
@@ -200,11 +229,14 @@ impl AstVisitor for Interpreter {
 
 impl Interpreter {
     pub fn new() -> Self {
-        let mut globals = Enviroment::new();
-        globals.define("clock", LoxObject::Callable(Rc::new(Box::new(Clock {}))));
+        let globals = Rc::new(RefCell::new(Enviroment::new()));
+        globals
+            .borrow_mut()
+            .define("clock", LoxObject::Callable(Rc::new(Box::new(Clock {}))));
 
         Self {
-            enviroment: Rc::new(RefCell::new(globals)),
+            globals: globals.clone(),
+            enviroment: globals.clone(),
         }
     }
 
@@ -222,7 +254,8 @@ impl Interpreter {
             LoxObject::String(s) => s.clone(),
             LoxObject::Number(n) => n.to_string(),
             LoxObject::Boolean(b) => b.to_string(),
-            LoxObject::Callable(_) => "callable".to_string(),
+            LoxObject::Callable(c) => c.to_string(),
+            LoxObject::Return(r) => r.to_string(),
             LoxObject::Nil => "nil".to_string(),
         }
     }
@@ -235,23 +268,26 @@ impl Interpreter {
         stmt.accept(self)
     }
 
-    fn execute_block(
+    pub fn execute_block(
         &mut self,
         statements: &[Box<Stmt>],
         enviroment: Enviroment,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<LoxObject, RuntimeError> {
         let previous = self.enviroment.clone();
         self.enviroment = Rc::new(RefCell::new(enviroment));
 
         for stmt in statements {
-            if let Err(e) = self.execute(stmt) {
-                self.enviroment = previous;
-                return Err(e);
+            match self.execute(stmt)? {
+                LoxObject::Return(o) => {
+                    self.enviroment = previous;
+                    return Ok(LoxObject::Return(o));
+                }
+                _ => (),
             }
         }
 
         self.enviroment = previous;
-        Ok(())
+        Ok(LoxObject::Nil)
     }
 
     fn is_truthy(&self, value: &LoxObject) -> bool {

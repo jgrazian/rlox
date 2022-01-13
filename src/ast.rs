@@ -12,6 +12,7 @@ pub enum LoxObject {
     String(String),
     Boolean(bool),
     Callable(Rc<Box<dyn LoxCallable>>),
+    Return(Box<LoxObject>),
     Nil,
 }
 
@@ -21,7 +22,8 @@ impl Display for LoxObject {
             LoxObject::Number(n) => write!(f, "{}", n),
             LoxObject::String(s) => write!(f, "{}", s),
             LoxObject::Boolean(b) => write!(f, "{}", b),
-            LoxObject::Callable(_) => write!(f, "callable"),
+            LoxObject::Callable(c) => write!(f, "{}", c.to_string()),
+            LoxObject::Return(o) => write!(f, "return {}", o),
             LoxObject::Nil => write!(f, "nil"),
         }
     }
@@ -34,6 +36,7 @@ impl Clone for LoxObject {
             LoxObject::String(s) => LoxObject::String(s.clone()),
             LoxObject::Boolean(b) => LoxObject::Boolean(*b),
             LoxObject::Callable(c) => LoxObject::Callable(c.clone()),
+            LoxObject::Return(o) => LoxObject::Return(o.clone()),
             LoxObject::Nil => LoxObject::Nil,
         }
     }
@@ -46,6 +49,7 @@ impl PartialEq for LoxObject {
             (LoxObject::String(s1), LoxObject::String(s2)) => s1 == s2,
             (LoxObject::Boolean(b1), LoxObject::Boolean(b2)) => b1 == b2,
             (LoxObject::Callable(_), LoxObject::Callable(_)) => false,
+            (LoxObject::Return(o1), LoxObject::Return(o2)) => o1 == o2,
             (LoxObject::Nil, LoxObject::Nil) => true,
             _ => false,
         }
@@ -149,6 +153,11 @@ define_ast!(
         Expression {
             expression: Box<Expr>
         },
+        Function {
+            name: Token,
+            params: Vec<Token>,
+            body: Vec<Box<Stmt>>
+        },
         If {
             condition: Box<Expr>,
             then_branch: Box<Stmt>,
@@ -156,6 +165,10 @@ define_ast!(
         },
         Print {
             expression: Box<Expr>
+        },
+        Return {
+            keyword: Token,
+            value: Option<Box<Expr>>
         },
         Var {
             name: Token,
