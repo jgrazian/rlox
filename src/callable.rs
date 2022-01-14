@@ -1,6 +1,7 @@
 use std::cell::RefCell;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::hash::Hash;
 use std::rc::Rc;
 
 use crate::ast::LoxObject;

@@ -1,4 +1,5 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
@@ -22,8 +23,10 @@ impl fmt::Display for RuntimeError {
     }
 }
 
+#[derive(Debug)]
 pub struct Interpreter {
     pub globals: Rc<RefCell<Enviroment>>,
+    locals: HashMap<Expr, usize>,
     pub enviroment: Rc<RefCell<Enviroment>>,
 }
 
@@ -220,10 +223,18 @@ impl AstVisitor for Interpreter {
                 }
                 function.call(self, args)
             }
-            Expr::Variable { name } => self.enviroment.borrow().get(name),
+            Expr::Variable { name } => self.look_up_variable(name, expr),
             Expr::Assign { name, value } => {
                 let value = self.evaluate(value)?;
-                self.enviroment.borrow_mut().assign(&name, value.clone())?;
+
+                if let Some(distance) = self.locals.get(expr) {
+                    self.enviroment
+                        .borrow_mut()
+                        .assign_at(*distance, &name, value.clone())?;
+                } else {
+                    self.globals.borrow_mut().assign(&name, value.clone())?;
+                }
+
                 Ok(value)
             }
         }
@@ -239,6 +250,7 @@ impl Interpreter {
 
         Self {
             globals: globals.clone(),
+            locals: HashMap::new(),
             enviroment: globals.clone(),
         }
     }
@@ -269,6 +281,20 @@ impl Interpreter {
 
     fn execute(&mut self, stmt: &Stmt) -> Result<LoxObject, RuntimeError> {
         stmt.accept(self)
+    }
+
+    pub fn resolve(&mut self, expr: &Expr, depth: usize) {
+        self.locals.insert(expr.clone(), depth);
+    }
+
+    fn look_up_variable(&self, name: &Token, expr: &Expr) -> Result<LoxObject, RuntimeError> {
+        if let Some(depth) = self.locals.get(expr) {
+            let env = self.enviroment.borrow();
+            let value = env.get_at(*depth, name.lexeme.clone())?;
+            Ok(value)
+        } else {
+            self.globals.borrow().get(&name)
+        }
     }
 
     pub fn execute_block(

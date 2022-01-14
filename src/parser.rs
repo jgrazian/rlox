@@ -62,6 +62,7 @@ impl fmt::Display for ParserError {
     }
 }
 
+#[derive(Debug)]
 pub struct Parser {
     tokens: Vec<Token>,
     current: usize,

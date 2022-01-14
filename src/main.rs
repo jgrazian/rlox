@@ -1,21 +1,25 @@
+use std::cell::RefCell;
 use std::env;
 use std::error::Error;
 use std::fs;
 use std::io;
 use std::io::Write;
 use std::process;
+use std::rc::Rc;
 
 mod ast;
 mod callable;
 mod enviroment;
 mod interpreter;
 mod parser;
+mod resolver;
 mod scanner;
 mod token;
 mod token_type;
 
 use interpreter::Interpreter;
 use parser::Parser;
+use resolver::Resolver;
 use scanner::Scanner;
 
 fn main() -> Result<(), Box<dyn Error>> {
@@ -70,9 +74,10 @@ fn run(source: &str) -> Result<(), Box<dyn Error>> {
     let mut parser = Parser::new(tokens);
     let statements = parser.parse()?;
 
-    let mut interpreter = Interpreter::new();
-    match interpreter.interpret(&statements) {
-        Ok(_) => Ok(()),
-        Err(e) => return Err(Box::new(e)),
-    }
+    let interpreter = Rc::new(RefCell::new(Interpreter::new()));
+    let mut resolver = Resolver::new(interpreter.clone());
+    resolver.resolve_stmt(&statements)?;
+
+    interpreter.borrow_mut().interpret(&statements)?;
+    Ok(())
 }
