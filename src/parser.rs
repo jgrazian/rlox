@@ -118,6 +118,9 @@ impl Parser {
     }
 
     fn declaration(&mut self) -> Result<Box<Stmt>, ParseError> {
+        if self.match_token(&[TokenType::Class]) {
+            return self.class_declaration();
+        }
         if self.match_token(&[TokenType::Fun]) {
             return self.function("function".to_string());
         }
@@ -133,6 +136,21 @@ impl Parser {
                 Err(e)
             }
         }
+    }
+
+    fn class_declaration(&mut self) -> Result<Box<Stmt>, ParseError> {
+        let name = self
+            .consume(TokenType::Identifier("".to_string()), "Expect class name.")?
+            .clone();
+        self.consume(TokenType::LeftBrace, "Expect '{' before class body.")?;
+
+        let mut methods = Vec::new();
+        while !self.check(&TokenType::RightBrace) && !self.is_at_end() {
+            methods.push(self.function("method".to_string())?);
+        }
+
+        self.consume(TokenType::RightBrace, "Expect '}' after class body.")?;
+        Ok(Box::new(Stmt::Class { name, methods }))
     }
 
     fn for_statement(&mut self) -> Result<Box<Stmt>, ParseError> {

@@ -149,6 +149,10 @@ impl AstVisitor for Resolver {
                 self.end_scope();
                 Ok(())
             }
+            Stmt::Class { name, .. } => {
+                self.declare(name)?;
+                self.define(name)
+            }
             Stmt::Var { name, initializer } => {
                 self.declare(name)?;
                 if let Some(initializer) = initializer {

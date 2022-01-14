@@ -2,7 +2,7 @@ use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
-use crate::callable::LoxCallable;
+use crate::callable::{LoxCallable, LoxInstance};
 use crate::token::Token;
 use crate::token_type::integer_decode;
 
@@ -13,7 +13,8 @@ pub enum LoxObject {
     Number(f64),
     String(String),
     Boolean(bool),
-    Callable(Rc<Box<dyn LoxCallable>>),
+    Callable(Rc<dyn LoxCallable>),
+    Instance(LoxInstance),
     Return(Box<LoxObject>),
     Nil,
 }
@@ -25,6 +26,7 @@ impl Display for LoxObject {
             LoxObject::String(s) => write!(f, "{}", s),
             LoxObject::Boolean(b) => write!(f, "{}", b),
             LoxObject::Callable(c) => write!(f, "{}", c.to_string()),
+            LoxObject::Instance(i) => write!(f, "{}", i.to_string()),
             LoxObject::Return(o) => write!(f, "return {}", o),
             LoxObject::Nil => write!(f, "nil"),
         }
@@ -38,6 +40,7 @@ impl Clone for LoxObject {
             LoxObject::String(s) => LoxObject::String(s.clone()),
             LoxObject::Boolean(b) => LoxObject::Boolean(*b),
             LoxObject::Callable(c) => LoxObject::Callable(c.clone()),
+            LoxObject::Instance(i) => LoxObject::Instance(i.clone()),
             LoxObject::Return(o) => LoxObject::Return(o.clone()),
             LoxObject::Nil => LoxObject::Nil,
         }
@@ -52,6 +55,7 @@ impl Hash for LoxObject {
             LoxObject::String(s) => s.hash(state),
             LoxObject::Boolean(b) => b.hash(state),
             LoxObject::Callable(c) => c.to_string().hash(state),
+            LoxObject::Instance(i) => i.hash(state),
             LoxObject::Return(o) => o.hash(state),
             LoxObject::Nil => 0.hash(state),
         }
@@ -158,6 +162,10 @@ define_ast!(
     Stmt {
         Block {
             statements: Vec<Box<Stmt>>
+        },
+        Class {
+            name: Token,
+            methods: Vec<Box<Stmt>>
         },
         Expression {
             expression: Box<Expr>

@@ -5,7 +5,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::ast::{AstVisitable, AstVisitor, Expr, LoxObject, Stmt};
-use crate::callable::{Clock, LoxCallable, LoxFunction};
+use crate::callable::{Clock, LoxCallable, LoxClass, LoxFunction};
 use crate::enviroment::Enviroment;
 use crate::token::Token;
 use crate::token_type::TokenType;
@@ -37,11 +37,10 @@ impl AstVisitor for Interpreter {
         match &stmt {
             Stmt::Expression { expression } => self.evaluate(expression),
             Stmt::Function { name, .. } => {
-                let fun: Box<dyn LoxCallable> = Box::new(LoxFunction::new(
+                let func: Rc<dyn LoxCallable> = Rc::new(LoxFunction::new(
                     Box::new(stmt.clone()),
                     self.enviroment.clone(),
                 ));
-                let func = Rc::new(fun);
                 self.enviroment
                     .borrow_mut()
                     .define(&name.lexeme, LoxObject::Callable(func.clone()));
@@ -105,6 +104,14 @@ impl AstVisitor for Interpreter {
                     LoxObject::Return(o) => Ok(LoxObject::Return(o)),
                     _ => Ok(LoxObject::Nil),
                 }
+            }
+            Stmt::Class { name, methods } => {
+                self.enviroment
+                    .borrow_mut()
+                    .define(&name.lexeme, LoxObject::Nil);
+                let klass = LoxObject::Callable(Rc::new(LoxClass::new(name.lexeme.clone())));
+                self.enviroment.borrow_mut().assign(name, klass)?;
+                Ok(LoxObject::Nil)
             }
         }
     }
@@ -246,7 +253,7 @@ impl Interpreter {
         let globals = Rc::new(RefCell::new(Enviroment::new()));
         globals
             .borrow_mut()
-            .define("clock", LoxObject::Callable(Rc::new(Box::new(Clock {}))));
+            .define("clock", LoxObject::Callable(Rc::new(Clock {})));
 
         Self {
             globals: globals.clone(),
@@ -270,6 +277,7 @@ impl Interpreter {
             LoxObject::Number(n) => n.to_string(),
             LoxObject::Boolean(b) => b.to_string(),
             LoxObject::Callable(c) => c.to_string(),
+            LoxObject::Instance(i) => i.to_string(),
             LoxObject::Return(r) => r.to_string(),
             LoxObject::Nil => "nil".to_string(),
         }

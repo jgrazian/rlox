@@ -75,6 +75,62 @@ impl LoxCallable for LoxFunction {
     }
 }
 
+#[derive(Debug, Clone, Hash)]
+struct LoxClassInner {
+    name: String,
+}
+
+#[derive(Debug, Clone, Hash)]
+pub struct LoxClass {
+    inner: Rc<LoxClassInner>,
+}
+
+impl LoxClass {
+    pub fn new(name: String) -> Self {
+        Self {
+            inner: Rc::new(LoxClassInner { name }),
+        }
+    }
+}
+
+impl Display for LoxClass {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}", self.inner.name)
+    }
+}
+
+impl LoxCallable for LoxClass {
+    fn arity(&self) -> usize {
+        0
+    }
+
+    fn call(
+        &self,
+        interpreter: &mut Interpreter,
+        arguments: Vec<LoxObject>,
+    ) -> Result<LoxObject, RuntimeError> {
+        let instance = LoxInstance::new(self.inner.clone());
+        Ok(LoxObject::Instance(instance))
+    }
+}
+
+#[derive(Debug, Clone, Hash)]
+pub struct LoxInstance {
+    klass: Rc<LoxClassInner>,
+}
+
+impl LoxInstance {
+    fn new(klass: Rc<LoxClassInner>) -> Self {
+        Self { klass }
+    }
+}
+
+impl Display for LoxInstance {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{} instance", self.klass.name)
+    }
+}
+
 #[derive(Debug)]
 pub struct Clock;
 
