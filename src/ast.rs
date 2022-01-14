@@ -56,15 +56,6 @@ impl PartialEq for LoxObject {
     }
 }
 
-impl LoxObject {
-    fn is_callable(&self) -> bool {
-        match self {
-            LoxObject::Callable(_) => true,
-            _ => false,
-        }
-    }
-}
-
 macro_rules! define_ast {
     (
         $($base_name:ident {

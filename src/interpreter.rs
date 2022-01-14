@@ -34,7 +34,10 @@ impl AstVisitor for Interpreter {
         match &stmt {
             Stmt::Expression { expression } => self.evaluate(expression),
             Stmt::Function { name, .. } => {
-                let fun: Box<dyn LoxCallable> = Box::new(LoxFunction::new(Box::new(stmt.clone())));
+                let fun: Box<dyn LoxCallable> = Box::new(LoxFunction::new(
+                    Box::new(stmt.clone()),
+                    self.enviroment.clone(),
+                ));
                 let func = Rc::new(fun);
                 self.enviroment
                     .borrow_mut()

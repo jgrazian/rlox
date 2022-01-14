@@ -1,9 +1,13 @@
-fun count(n) {
-  while (n < 100) {
-    if (n == 3) return n; // <--
-    print n;
-    n = n + 1;
+fun makeCounter() {
+  var i = 0;
+  fun count() {
+    i = i + 1;
+    print i;
   }
+
+  return count;
 }
 
-count(1);
+var counter = makeCounter();
+counter(); // "1".
+counter(); // "2".

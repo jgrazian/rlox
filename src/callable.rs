@@ -1,5 +1,7 @@
+use std::cell::RefCell;
 use std::fmt::Debug;
 use std::fmt::Display;
+use std::rc::Rc;
 
 use crate::ast::LoxObject;
 use crate::ast::Stmt;
@@ -19,11 +21,15 @@ pub trait LoxCallable: Debug + Display {
 #[derive(Debug)]
 pub struct LoxFunction {
     declaration: Box<Stmt>,
+    closure: Rc<RefCell<Enviroment>>,
 }
 
 impl LoxFunction {
-    pub fn new(declaration: Box<Stmt>) -> Self {
-        Self { declaration }
+    pub fn new(declaration: Box<Stmt>, closure: Rc<RefCell<Enviroment>>) -> Self {
+        Self {
+            declaration,
+            closure,
+        }
     }
 }
 
@@ -51,7 +57,7 @@ impl LoxCallable for LoxFunction {
         interpreter: &mut Interpreter,
         arguments: Vec<LoxObject>,
     ) -> Result<LoxObject, RuntimeError> {
-        let mut env = Enviroment::enclosed(interpreter.globals.clone());
+        let mut env = Enviroment::enclosed(self.closure.clone());
 
         if let Stmt::Function { params, body, .. } = &*self.declaration {
             for (param, argument) in params.iter().zip(arguments) {
