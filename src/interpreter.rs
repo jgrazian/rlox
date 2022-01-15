@@ -37,10 +37,10 @@ impl AstVisitor for Interpreter {
         match &stmt {
             Stmt::Expression { expression } => self.evaluate(expression),
             Stmt::Function { name, .. } => {
-                let func: Rc<dyn LoxCallable> = Rc::new(LoxFunction::new(
+                let func = Rc::new(RefCell::new(LoxFunction::new(
                     Box::new(stmt.clone()),
                     self.enviroment.clone(),
-                ));
+                )));
                 self.enviroment
                     .borrow_mut()
                     .define(&name.lexeme, LoxObject::Callable(func.clone()));
@@ -109,7 +109,25 @@ impl AstVisitor for Interpreter {
                 self.enviroment
                     .borrow_mut()
                     .define(&name.lexeme, LoxObject::Nil);
-                let klass = LoxObject::Callable(Rc::new(LoxClass::new(name.lexeme.clone())));
+
+                let mut _methods = HashMap::new();
+                for method in methods {
+                    let method_name = if let Stmt::Function { name, .. } = *method.clone() {
+                        name.lexeme.clone()
+                    } else {
+                        continue;
+                    };
+                    let function = Rc::new(RefCell::new(LoxFunction::new(
+                        method.clone(),
+                        self.enviroment.clone(),
+                    )));
+                    _methods.insert(method_name, function);
+                }
+
+                let klass = LoxObject::Callable(Rc::new(RefCell::new(LoxClass::new(
+                    name.lexeme.clone(),
+                    _methods,
+                ))));
                 self.enviroment.borrow_mut().assign(name, klass)?;
                 Ok(LoxObject::Nil)
             }
@@ -136,6 +154,24 @@ impl AstVisitor for Interpreter {
                     }
                 }
                 self.evaluate(right)
+            }
+            Expr::Set {
+                name,
+                object,
+                value,
+            } => {
+                let object = self.evaluate(object)?;
+
+                if let LoxObject::Instance(mut instance) = object {
+                    let value = self.evaluate(value)?;
+                    instance.set(&name, value.clone());
+                    Ok(value)
+                } else {
+                    Err(RuntimeError {
+                        message: "Only instances have fields".to_string(),
+                        token: name.clone(),
+                    })
+                }
             }
             Expr::Grouping { expression } => Ok(self.evaluate(expression)?),
             Expr::Unary { operator, right } => {
@@ -209,7 +245,7 @@ impl AstVisitor for Interpreter {
                     args.push(self.evaluate(arg)?);
                 }
 
-                let function = match &callee {
+                let function = match callee {
                     LoxObject::Callable(callable) => callable,
                     _ => {
                         return Err(RuntimeError {
@@ -218,17 +254,28 @@ impl AstVisitor for Interpreter {
                         })
                     }
                 };
-                if function.arity() != args.len() {
+                if function.borrow().arity() != args.len() {
                     return Err(RuntimeError {
                         message: format!(
                             "Expected {} arguments found {}",
-                            function.arity(),
+                            function.borrow().arity(),
                             args.len()
                         ),
                         token: paren.clone(),
                     });
                 }
-                function.call(self, args)
+                let res = function.borrow_mut().call(self, args);
+                res
+            }
+            Expr::Get { object, name } => {
+                let object = self.evaluate(object)?;
+                match object {
+                    LoxObject::Instance(instance) => instance.get(&name),
+                    _ => Err(RuntimeError {
+                        message: format!("Can't get {} on {:?}", name.lexeme, object),
+                        token: name.clone(),
+                    }),
+                }
             }
             Expr::Variable { name } => self.look_up_variable(name, expr),
             Expr::Assign { name, value } => {
@@ -251,9 +298,10 @@ impl AstVisitor for Interpreter {
 impl Interpreter {
     pub fn new() -> Self {
         let globals = Rc::new(RefCell::new(Enviroment::new()));
-        globals
-            .borrow_mut()
-            .define("clock", LoxObject::Callable(Rc::new(Clock {})));
+        globals.borrow_mut().define(
+            "clock",
+            LoxObject::Callable(Rc::new(RefCell::new(Clock {}))),
+        );
 
         Self {
             globals: globals.clone(),
@@ -272,15 +320,7 @@ impl Interpreter {
     }
 
     fn stringify(&self, value: &LoxObject) -> String {
-        match value {
-            LoxObject::String(s) => s.clone(),
-            LoxObject::Number(n) => n.to_string(),
-            LoxObject::Boolean(b) => b.to_string(),
-            LoxObject::Callable(c) => c.to_string(),
-            LoxObject::Instance(i) => i.to_string(),
-            LoxObject::Return(r) => r.to_string(),
-            LoxObject::Nil => "nil".to_string(),
-        }
+        value.to_string()
     }
 
     fn evaluate(&mut self, expr: &Expr) -> Result<LoxObject, RuntimeError> {

@@ -1,25 +1,27 @@
 use std::cell::RefCell;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::fmt::Display;
-use std::hash::Hash;
+use std::hash::{Hash, Hasher};
 use std::rc::Rc;
 
 use crate::ast::LoxObject;
 use crate::ast::Stmt;
 use crate::enviroment::Enviroment;
 use crate::interpreter::{Interpreter, RuntimeError};
+use crate::token::Token;
 
 pub trait LoxCallable: Debug + Display {
     fn arity(&self) -> usize;
 
     fn call(
-        &self,
+        &mut self,
         interpreter: &mut Interpreter,
         arguments: Vec<LoxObject>,
     ) -> Result<LoxObject, RuntimeError>;
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct LoxFunction {
     declaration: Box<Stmt>,
     closure: Rc<RefCell<Enviroment>>,
@@ -54,7 +56,7 @@ impl LoxCallable for LoxFunction {
     }
 
     fn call(
-        &self,
+        &mut self,
         interpreter: &mut Interpreter,
         arguments: Vec<LoxObject>,
     ) -> Result<LoxObject, RuntimeError> {
@@ -75,20 +77,35 @@ impl LoxCallable for LoxFunction {
     }
 }
 
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone)]
 struct LoxClassInner {
     name: String,
+    methods: HashMap<String, Rc<RefCell<LoxFunction>>>,
+}
+
+impl LoxClassInner {
+    fn find_method(&self, name: &str) -> Option<Rc<RefCell<LoxFunction>>> {
+        self.methods.get(name).cloned()
+    }
+}
+
+impl Hash for LoxClassInner {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        self.name.hash(state);
+    }
 }
 
 #[derive(Debug, Clone, Hash)]
 pub struct LoxClass {
     inner: Rc<LoxClassInner>,
+    _instance_count: usize,
 }
 
 impl LoxClass {
-    pub fn new(name: String) -> Self {
+    pub fn new(name: String, methods: HashMap<String, Rc<RefCell<LoxFunction>>>) -> Self {
         Self {
-            inner: Rc::new(LoxClassInner { name }),
+            inner: Rc::new(LoxClassInner { name, methods }),
+            _instance_count: 0,
         }
     }
 }
@@ -105,29 +122,65 @@ impl LoxCallable for LoxClass {
     }
 
     fn call(
-        &self,
-        interpreter: &mut Interpreter,
-        arguments: Vec<LoxObject>,
+        &mut self,
+        _interpreter: &mut Interpreter,
+        _arguments: Vec<LoxObject>,
     ) -> Result<LoxObject, RuntimeError> {
-        let instance = LoxInstance::new(self.inner.clone());
+        self._instance_count += 1;
+        let instance = LoxInstance::new(self.inner.clone(), self._instance_count);
         Ok(LoxObject::Instance(instance))
     }
 }
 
-#[derive(Debug, Clone, Hash)]
+#[derive(Debug, Clone)]
 pub struct LoxInstance {
     klass: Rc<LoxClassInner>,
+    fields: HashMap<String, LoxObject>,
+    _hash_id: usize,
 }
 
 impl LoxInstance {
-    fn new(klass: Rc<LoxClassInner>) -> Self {
-        Self { klass }
+    fn new(klass: Rc<LoxClassInner>, instance_number: usize) -> Self {
+        Self {
+            klass,
+            fields: HashMap::new(),
+            _hash_id: instance_number,
+        }
+    }
+
+    pub fn get(&self, name: &Token) -> Result<LoxObject, RuntimeError> {
+        match self.fields.get(&name.lexeme) {
+            Some(o) => Ok(o.clone()),
+            None => {
+                if let Some(method) = self.klass.find_method(&name.lexeme) {
+                    Ok(LoxObject::Callable(method.clone()))
+                } else {
+                    Err(RuntimeError {
+                        token: name.clone(),
+                        message: format!(
+                            "Instance of {} has no field {}",
+                            self.klass.name, name.lexeme
+                        ),
+                    })
+                }
+            }
+        }
+    }
+
+    pub fn set(&mut self, name: &Token, value: LoxObject) {
+        self.fields.insert(name.lexeme.clone(), value);
     }
 }
 
 impl Display for LoxInstance {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{} instance", self.klass.name)
+    }
+}
+
+impl Hash for LoxInstance {
+    fn hash<H: Hasher>(&self, state: &mut H) {
+        (self.klass.name.clone(), self._hash_id).hash(state);
     }
 }
 
@@ -140,7 +193,7 @@ impl LoxCallable for Clock {
     }
 
     fn call(
-        &self,
+        &mut self,
         _interpreter: &mut Interpreter,
         _arguments: Vec<LoxObject>,
     ) -> Result<LoxObject, RuntimeError> {

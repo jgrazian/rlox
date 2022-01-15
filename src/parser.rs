@@ -349,21 +349,29 @@ impl Parser {
             let value = self.assignment()?;
 
             match expr {
-                Ok(expr) => {
-                    if let Expr::Variable { name } = *expr {
+                Ok(expr) => match *expr {
+                    Expr::Variable { name } => {
                         return Ok(Box::new(Expr::Assign {
                             name: name.clone(),
                             value,
-                        }));
+                        }))
                     }
-                }
+                    Expr::Get { object, name } => {
+                        return Ok(Box::new(Expr::Set {
+                            object,
+                            name: name.clone(),
+                            value,
+                        }))
+                    }
+                    _ => {
+                        return Err(ParseError::new(
+                            equals,
+                            "Invalid assignment target.".to_string(),
+                        ))
+                    }
+                },
                 Err(e) => return Err(e),
             };
-
-            return Err(ParseError::new(
-                equals,
-                "Invalid assignment target.".to_string(),
-            ));
         }
         expr
     }
@@ -477,9 +485,23 @@ impl Parser {
     fn call(&mut self) -> Result<Box<Expr>, ParseError> {
         let mut expr = self.primary()?;
 
-        while self.match_token(&[TokenType::LeftParen]) {
-            expr = self.finish_call(expr)?;
+        loop {
+            if self.match_token(&[TokenType::LeftParen]) {
+                expr = self.finish_call(expr)?;
+            } else if self.match_token(&[TokenType::Dot]) {
+                let name = self.consume(
+                    TokenType::Identifier("".to_string()),
+                    "Expect property name after '.'.",
+                )?;
+                expr = Box::new(Expr::Get {
+                    object: expr,
+                    name: name.clone(),
+                });
+            } else {
+                break;
+            }
         }
+
         Ok(expr)
     }
 

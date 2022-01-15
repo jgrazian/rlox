@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
-use crate::ast::{AstVisitable, AstVisitor, Expr, Stmt};
+use crate::ast::{AstVisitable, AstVisitor, Expr, LoxObject, Stmt};
 use crate::interpreter::Interpreter;
 use crate::token::Token;
 use crate::token_type::TokenType;
@@ -40,6 +40,7 @@ impl fmt::Display for ResolveError {
 enum FunctionType {
     None,
     Function,
+    Method,
 }
 
 #[derive(Debug)]
@@ -149,9 +150,21 @@ impl AstVisitor for Resolver {
                 self.end_scope();
                 Ok(())
             }
-            Stmt::Class { name, .. } => {
+            Stmt::Class { name, methods } => {
                 self.declare(name)?;
-                self.define(name)
+                self.define(name)?;
+
+                for method in methods {
+                    match *method.clone() {
+                        Stmt::Function { params, body, .. } => {
+                            let declaration = FunctionType::Method;
+                            self.resolve_function(&params, &body, declaration)?;
+                        }
+                        _ => {}
+                    }
+                }
+
+                Ok(())
             }
             Stmt::Var { name, initializer } => {
                 self.declare(name)?;
@@ -232,11 +245,16 @@ impl AstVisitor for Resolver {
                 }
                 Ok(())
             }
+            Expr::Get { object, .. } => self.resolve_expr(object),
             Expr::Grouping { expression } => self.resolve_expr(expression),
             Expr::Literal { .. } => Ok(()),
             Expr::Logical { left, right, .. } => {
                 self.resolve_expr(left)?;
                 self.resolve_expr(right)
+            }
+            Expr::Set { object, value, .. } => {
+                self.resolve_expr(value)?;
+                self.resolve_expr(object)
             }
             Expr::Unary { right, .. } => self.resolve_expr(right),
         }
