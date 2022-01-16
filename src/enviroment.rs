@@ -36,10 +36,10 @@ impl Enviroment {
             Some(value) => Ok(value.clone()),
             None => match &self.enclosing {
                 Some(enclosed) => enclosed.borrow().get(name),
-                None => Err(RuntimeError {
-                    token: name.clone(),
-                    message: format!("Undefined variable '{}'.", name),
-                }),
+                None => Err(RuntimeError::new(
+                    name,
+                    &format!("Undefined variable '{}'.", name),
+                )),
             },
         }
     }
@@ -77,10 +77,10 @@ impl Enviroment {
                     enclosed.borrow_mut().assign(name, value)?;
                     Ok(())
                 }
-                None => Err(RuntimeError {
-                    token: name.clone(),
-                    message: format!("Undefined variable '{}'.", name),
-                }),
+                None => Err(RuntimeError::new(
+                    name,
+                    &format!("Undefined variable '{}'.", name),
+                )),
             },
         }
     }

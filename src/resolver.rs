@@ -17,8 +17,11 @@ pub struct ResolveError {
 impl Error for ResolveError {}
 
 impl ResolveError {
-    fn new(token: Token, message: String) -> Self {
-        Self { token, message }
+    fn new(token: &Token, message: &str) -> Self {
+        Self {
+            token: token.clone(),
+            message: message.to_string(),
+        }
     }
 }
 
@@ -95,8 +98,8 @@ impl Resolver {
         let scope = self.scopes.last_mut().unwrap();
         if scope.contains_key(&name.lexeme) {
             return Err(ResolveError::new(
-                name.clone(),
-                "Already a variable with this name in this scope.".to_string(),
+                name,
+                "Already a variable with this name in this scope.",
             ));
         }
         scope.insert(name.lexeme.clone(), false);
@@ -159,12 +162,35 @@ impl AstVisitor for Resolver {
                 self.end_scope();
                 Ok(())
             }
-            Stmt::Class { name, methods } => {
+            Stmt::Class {
+                name,
+                methods,
+                superclass,
+            } => {
                 let enclosing_class = self.current_class;
                 self.current_class = ClassType::Class;
 
                 self.declare(name)?;
                 self.define(name)?;
+
+                if let Some(superclass) = superclass {
+                    let super_name = if let Expr::Variable { name } = &**superclass {
+                        name.clone()
+                    } else {
+                        return Err(ResolveError::new(
+                            name,
+                            "Superclass resolution expected a Variable.",
+                        ));
+                    };
+                    if name.lexeme == super_name.lexeme {
+                        return Err(ResolveError::new(
+                            &super_name,
+                            "A class can't inherit from itself.",
+                        ));
+                    }
+
+                    self.resolve_expr(superclass)?;
+                }
 
                 self.begin_scope();
                 self.scopes
@@ -220,16 +246,16 @@ impl AstVisitor for Resolver {
             Stmt::Return { keyword, value, .. } => {
                 if self.current_function == FunctionType::None {
                     return Err(ResolveError::new(
-                        keyword.clone(),
-                        "Cannot return from top-level code.".to_string(),
+                        keyword,
+                        "Cannot return from top-level code.",
                     ));
                 }
 
                 if let Some(value) = value {
                     if self.current_function == FunctionType::Initializer {
                         return Err(ResolveError::new(
-                            keyword.clone(),
-                            "Can't return a value from an initializer.".to_string(),
+                            keyword,
+                            "Can't return a value from an initializer.",
                         ));
                     }
 
@@ -250,8 +276,8 @@ impl AstVisitor for Resolver {
                 if let Some(scope) = self.scopes.last() {
                     if scope.get(&name.lexeme) == Some(&false) {
                         return Err(ResolveError::new(
-                            name.clone(),
-                            "Can't read local variable in its own initializer.".to_string(),
+                            name,
+                            "Can't read local variable in its own initializer.",
                         ));
                     }
                 }
@@ -291,8 +317,8 @@ impl AstVisitor for Resolver {
             Expr::This { keyword } => {
                 if self.current_class == ClassType::None {
                     return Err(ResolveError::new(
-                        keyword.clone(),
-                        "Can't use 'this' outside of a class.".to_string(),
+                        keyword,
+                        "Can't use 'this' outside of a class.",
                     ));
                 }
                 self.resolve_local(expr, keyword)

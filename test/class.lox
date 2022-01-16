@@ -3,7 +3,13 @@ class Foo {
     this.i = i;
     return;
   }
+
+  test(j) {
+    var k = this.i + j;
+    print k;
+  }
 }
 
 var a = Foo(1);
 print a.i;
+a.test(4);
