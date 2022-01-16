@@ -61,7 +61,7 @@ impl Hash for TokenType {
             Self::Number(n) => integer_decode(*n).hash(state),
             Self::Identifier(s) => s.hash(state),
             Self::String(s) => s.hash(state),
-            _ => self.hash(state),
+            _ => mem::discriminant(self).hash(state),
         }
     }
 }

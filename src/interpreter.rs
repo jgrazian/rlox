@@ -5,7 +5,7 @@ use std::fmt;
 use std::rc::Rc;
 
 use crate::ast::{AstVisitable, AstVisitor, Expr, LoxObject, Stmt};
-use crate::callable::{Clock, LoxCallable, LoxClass, LoxFunction};
+use crate::callable::{Clock, LoxClass, LoxFunction};
 use crate::enviroment::Enviroment;
 use crate::token::Token;
 use crate::token_type::TokenType;
@@ -264,7 +264,7 @@ impl AstVisitor for Interpreter {
                         token: paren.clone(),
                     });
                 }
-                let res = function.borrow_mut().call(self, args);
+                let res = function.borrow().call(self, args);
                 res
             }
             Expr::Get { object, name } => {

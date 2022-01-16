@@ -4,7 +4,7 @@ use std::error::Error;
 use std::fmt;
 use std::rc::Rc;
 
-use crate::ast::{AstVisitable, AstVisitor, Expr, LoxObject, Stmt};
+use crate::ast::{AstVisitable, AstVisitor, Expr, Stmt};
 use crate::interpreter::Interpreter;
 use crate::token::Token;
 use crate::token_type::TokenType;

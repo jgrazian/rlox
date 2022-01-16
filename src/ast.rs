@@ -50,7 +50,6 @@ impl Clone for LoxObject {
 
 impl Hash for LoxObject {
     fn hash<H: Hasher>(&self, state: &mut H) {
-        dbg!(&self);
         match self {
             LoxObject::Number(n) => integer_decode(*n).hash(state),
             LoxObject::String(s) => s.hash(state),
@@ -65,7 +64,6 @@ impl Hash for LoxObject {
 
 impl PartialEq for LoxObject {
     fn eq(&self, other: &Self) -> bool {
-        dbg!(&self);
         match (self, other) {
             (LoxObject::Number(n1), LoxObject::Number(n2)) => n1 == n2,
             (LoxObject::String(s1), LoxObject::String(s2)) => s1 == s2,
