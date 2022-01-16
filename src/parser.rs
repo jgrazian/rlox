@@ -575,6 +575,11 @@ impl Parser {
             self.consume(TokenType::RightParen, "Expect ')' after expression.")?;
             return Ok(expr);
         }
+        if self.match_token(&[TokenType::This]) {
+            return Ok(Box::new(Expr::This {
+                keyword: self.previous().clone(),
+            }));
+        }
         if self.match_token(&[TokenType::Identifier("".to_string())]) {
             return Ok(Box::new(Expr::Variable {
                 name: self.previous().clone(),

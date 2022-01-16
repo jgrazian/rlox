@@ -40,7 +40,14 @@ impl fmt::Display for ResolveError {
 enum FunctionType {
     None,
     Function,
+    Initializer,
     Method,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum ClassType {
+    None,
+    Class,
 }
 
 #[derive(Debug)]
@@ -48,6 +55,7 @@ pub struct Resolver {
     interpreter: Rc<RefCell<Interpreter>>,
     scopes: Vec<HashMap<String, bool>>,
     current_function: FunctionType,
+    current_class: ClassType,
 }
 
 impl Resolver {
@@ -56,6 +64,7 @@ impl Resolver {
             interpreter,
             scopes: Vec::new(),
             current_function: FunctionType::None,
+            current_class: ClassType::None,
         }
     }
 
@@ -151,19 +160,35 @@ impl AstVisitor for Resolver {
                 Ok(())
             }
             Stmt::Class { name, methods } => {
+                let enclosing_class = self.current_class;
+                self.current_class = ClassType::Class;
+
                 self.declare(name)?;
                 self.define(name)?;
 
+                self.begin_scope();
+                self.scopes
+                    .last_mut()
+                    .unwrap()
+                    .insert("this".to_string(), true);
+
                 for method in methods {
                     match *method.clone() {
-                        Stmt::Function { params, body, .. } => {
-                            let declaration = FunctionType::Method;
+                        Stmt::Function { params, body, name } => {
+                            let declaration = if name.lexeme == "init" {
+                                FunctionType::Initializer
+                            } else {
+                                FunctionType::Method
+                            };
+
                             self.resolve_function(&params, &body, declaration)?;
                         }
                         _ => {}
                     }
                 }
 
+                self.end_scope();
+                self.current_class = enclosing_class;
                 Ok(())
             }
             Stmt::Var { name, initializer } => {
@@ -201,6 +226,13 @@ impl AstVisitor for Resolver {
                 }
 
                 if let Some(value) = value {
+                    if self.current_function == FunctionType::Initializer {
+                        return Err(ResolveError::new(
+                            keyword.clone(),
+                            "Can't return a value from an initializer.".to_string(),
+                        ));
+                    }
+
                     self.resolve_expr(value)?;
                 }
                 Ok(())
@@ -255,6 +287,15 @@ impl AstVisitor for Resolver {
             Expr::Set { object, value, .. } => {
                 self.resolve_expr(value)?;
                 self.resolve_expr(object)
+            }
+            Expr::This { keyword } => {
+                if self.current_class == ClassType::None {
+                    return Err(ResolveError::new(
+                        keyword.clone(),
+                        "Can't use 'this' outside of a class.".to_string(),
+                    ));
+                }
+                self.resolve_local(expr, keyword)
             }
             Expr::Unary { right, .. } => self.resolve_expr(right),
         }

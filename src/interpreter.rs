@@ -40,6 +40,7 @@ impl AstVisitor for Interpreter {
                 let func = Rc::new(RefCell::new(LoxFunction::new(
                     Box::new(stmt.clone()),
                     self.enviroment.clone(),
+                    false,
                 )));
                 self.enviroment
                     .borrow_mut()
@@ -120,6 +121,7 @@ impl AstVisitor for Interpreter {
                     let function = Rc::new(RefCell::new(LoxFunction::new(
                         method.clone(),
                         self.enviroment.clone(),
+                        &method_name == "init",
                     )));
                     _methods.insert(method_name, function);
                 }
@@ -173,6 +175,7 @@ impl AstVisitor for Interpreter {
                     })
                 }
             }
+            Expr::This { keyword } => self.look_up_variable(keyword, expr),
             Expr::Grouping { expression } => Ok(self.evaluate(expression)?),
             Expr::Unary { operator, right } => {
                 let right = self.evaluate(right)?;

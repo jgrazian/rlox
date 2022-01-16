@@ -159,6 +159,9 @@ define_ast!(
             name: Token,
             value: Box<Expr>
         },
+        This {
+            keyword: Token
+        },
         Unary {
             operator: Token,
             right: Box<Expr>

@@ -25,13 +25,29 @@ pub trait LoxCallable: Debug + Display {
 pub struct LoxFunction {
     declaration: Box<Stmt>,
     closure: Rc<RefCell<Enviroment>>,
+    is_initializer: bool,
 }
 
 impl LoxFunction {
-    pub fn new(declaration: Box<Stmt>, closure: Rc<RefCell<Enviroment>>) -> Self {
+    pub fn new(
+        declaration: Box<Stmt>,
+        closure: Rc<RefCell<Enviroment>>,
+        is_initializer: bool,
+    ) -> Self {
         Self {
             declaration,
             closure,
+            is_initializer,
+        }
+    }
+
+    fn bind(&self, instance: LoxObject) -> LoxFunction {
+        let mut enviroment = Enviroment::enclosed(self.closure.clone());
+        enviroment.define("this", instance);
+        Self {
+            declaration: self.declaration.clone(),
+            closure: Rc::new(RefCell::new(enviroment)),
+            is_initializer: self.is_initializer,
         }
     }
 }
@@ -67,8 +83,11 @@ impl LoxCallable for LoxFunction {
                 env.define(&param.lexeme, argument);
             }
 
-            match interpreter.execute_block(&body, env)? {
-                LoxObject::Return(o) => Ok(*o),
+            match (self.is_initializer, interpreter.execute_block(&body, env)?) {
+                (true, _) => Ok(LoxObject::Return(Box::new(
+                    self.closure.borrow().get_at(0, "this".to_string())?,
+                ))),
+                (_, LoxObject::Return(o)) => Ok(*o),
                 _ => Ok(LoxObject::Nil),
             }
         } else {
@@ -127,16 +146,26 @@ impl Hash for LoxClass {
 
 impl LoxCallable for LoxClass {
     fn arity(&self) -> usize {
-        0
+        if let Some(initializer) = self.inner.borrow().find_method("init") {
+            initializer.borrow().arity()
+        } else {
+            0
+        }
     }
 
     fn call(
         &self,
-        _interpreter: &mut Interpreter,
-        _arguments: Vec<LoxObject>,
+        interpreter: &mut Interpreter,
+        arguments: Vec<LoxObject>,
     ) -> Result<LoxObject, RuntimeError> {
         self.inner.borrow_mut()._instance_count += 1;
         let instance = LoxInstance::new(self.inner.clone(), self.inner.borrow()._instance_count);
+        if let Some(initializer) = self.inner.borrow().find_method("init") {
+            initializer
+                .borrow()
+                .bind(LoxObject::Instance(instance.clone()))
+                .call(interpreter, arguments)?;
+        }
         Ok(LoxObject::Instance(instance))
     }
 }
@@ -144,7 +173,7 @@ impl LoxCallable for LoxClass {
 #[derive(Debug, Clone)]
 pub struct LoxInstance {
     klass: Rc<RefCell<LoxClassInner>>,
-    fields: HashMap<String, LoxObject>,
+    fields: Rc<RefCell<HashMap<String, LoxObject>>>,
     _hash_id: usize,
 }
 
@@ -152,17 +181,18 @@ impl LoxInstance {
     fn new(klass: Rc<RefCell<LoxClassInner>>, instance_number: usize) -> Self {
         Self {
             klass,
-            fields: HashMap::new(),
+            fields: Rc::new(RefCell::new(HashMap::new())),
             _hash_id: instance_number,
         }
     }
 
     pub fn get(&self, name: &Token) -> Result<LoxObject, RuntimeError> {
-        match self.fields.get(&name.lexeme) {
+        match self.fields.borrow().get(&name.lexeme) {
             Some(o) => Ok(o.clone()),
             None => {
                 if let Some(method) = self.klass.borrow().find_method(&name.lexeme) {
-                    Ok(LoxObject::Callable(method.clone()))
+                    let fun = method.borrow().bind(LoxObject::Instance(self.clone()));
+                    Ok(LoxObject::Callable(Rc::new(RefCell::new(fun))))
                 } else {
                     Err(RuntimeError {
                         token: name.clone(),
@@ -178,7 +208,7 @@ impl LoxInstance {
     }
 
     pub fn set(&mut self, name: &Token, value: LoxObject) {
-        self.fields.insert(name.lexeme.clone(), value);
+        self.fields.borrow_mut().insert(name.lexeme.clone(), value);
     }
 }
 
