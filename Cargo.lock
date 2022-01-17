@@ -3,5 +3,19 @@
 version = 3
 
 [[package]]
+name = "ast-gen"
+version = "0.1.0"
+
+[[package]]
 name = "rlox"
 version = "0.1.0"
+dependencies = [
+ "tree-walk",
+]
+
+[[package]]
+name = "tree-walk"
+version = "0.1.0"
+dependencies = [
+ "ast-gen",
+]

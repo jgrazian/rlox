@@ -1,12 +1,11 @@
 use std::fmt::Display;
 use std::hash::{Hash, Hasher};
 
-use crate::callable::{LoxCallable, LoxInstance};
+use ast_gen::{impl_visitor_methods, make_visitor_methods};
 
+use crate::callable::{LoxCallable, LoxInstance};
 use crate::token::Token;
 use crate::token_type::integer_decode;
-
-use rlox_lib::{impl_new_methods, impl_visitor_methods, make_visitor_methods};
 
 #[derive(Debug)]
 pub enum LoxObject {
@@ -104,12 +103,6 @@ macro_rules! define_ast {
             $($class_name {
                 $($field_name: $field_type),*
             }),*
-        }
-
-        impl $base_name {
-            $(
-                impl_new_methods!($class_name$($field_name$field_type)*);
-            )*
         }
 
         impl AstVisitable for $base_name {
