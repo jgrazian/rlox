@@ -85,8 +85,7 @@ impl Scanner {
             }
         }
 
-        self.tokens
-            .push(Token::new(TokenType::Eof, "".to_string(), self.line));
+        self.tokens.push(Token::new(TokenType::Eof, "", self.line));
 
         if errors.errors.len() == 0 {
             Ok(self.tokens.clone())
@@ -272,10 +271,86 @@ impl Scanner {
 
     fn push_token(&mut self, token: TokenType) {
         let text = String::from_iter(&self.chars[self.start..self.current]);
-        self.tokens.push(Token::new(token, text, self.line))
+        self.tokens.push(Token::new(token, &text, self.line))
     }
 
     fn is_at_end(&self) -> bool {
         self.current >= self.chars.len()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_scan_tokens() -> Result<(), ScannerError> {
+        let input = vec![
+            (TokenType::Eof, ""),
+            (TokenType::LeftParen, "("),
+            (TokenType::RightParen, ")"),
+            (TokenType::LeftBrace, "{"),
+            (TokenType::RightBrace, "}"),
+            (TokenType::Comma, ","),
+            (TokenType::Dot, "."),
+            (TokenType::Minus, "-"),
+            (TokenType::Plus, "+"),
+            (TokenType::Semicolon, ";"),
+            (TokenType::Star, "*"),
+            (TokenType::Bang, "!"),
+            (TokenType::BangEqual, "!="),
+            (TokenType::Equal, "="),
+            (TokenType::EqualEqual, "=="),
+            (TokenType::Less, "<"),
+            (TokenType::LessEqual, "<="),
+            (TokenType::Greater, ">"),
+            (TokenType::GreaterEqual, ">="),
+            (TokenType::Slash, "/"),
+            // Keywords
+            (TokenType::And, "and"),
+            (TokenType::Class, "class"),
+            (TokenType::Else, "else"),
+            (TokenType::False, "false"),
+            (TokenType::For, "for"),
+            (TokenType::Fun, "fun"),
+            (TokenType::If, "if"),
+            (TokenType::Nil, "nil"),
+            (TokenType::Or, "or"),
+            (TokenType::Print, "print"),
+            (TokenType::Return, "return"),
+            (TokenType::Super, "super"),
+            (TokenType::This, "this"),
+            (TokenType::True, "true"),
+            (TokenType::Var, "var"),
+            (TokenType::While, "while"),
+            // Types
+            (
+                TokenType::String("Hello World!".to_string()),
+                r#""Hello World!""#,
+            ),
+            (
+                TokenType::Identifier("iden_tifier".to_string()),
+                "iden_tifier",
+            ),
+            (TokenType::Number(42.0), "42.0"),
+        ];
+
+        for (token_type, lexeme) in input {
+            assert_eq!(
+                Scanner::new(lexeme).scan_tokens()?[0].token_type,
+                Token::new(token_type, lexeme, 1).token_type
+            );
+        }
+
+        assert_eq!(
+            {
+                let mut scanner = Scanner::new("\n");
+                scanner.scan_tokens()?;
+                scanner.line
+            },
+            2
+        );
+
+        Ok(())
     }
 }

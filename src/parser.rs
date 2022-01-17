@@ -13,8 +13,11 @@ pub struct ParseError {
 impl Error for ParseError {}
 
 impl ParseError {
-    fn new(token: Token, message: String) -> Self {
-        Self { token, message }
+    fn new(token: &Token, message: &str) -> Self {
+        Self {
+            token: token.clone(),
+            message: message.to_string(),
+        }
     }
 }
 
@@ -291,8 +294,8 @@ impl Parser {
             loop {
                 if parameters.len() >= 255 {
                     return Err(ParseError::new(
-                        self.peek().clone(),
-                        "Cannot have more than 255 parameters.".to_string(),
+                        self.peek(),
+                        "Cannot have more than 255 parameters.",
                     ));
                 }
 
@@ -321,10 +324,7 @@ impl Parser {
                 body: statements,
             }))
         } else {
-            Err(ParseError::new(
-                self.peek().clone(),
-                "Expect {} body.".to_string(),
-            ))
+            Err(ParseError::new(self.peek(), "Expect function body."))
         }
     }
 
@@ -380,12 +380,7 @@ impl Parser {
                             value,
                         }))
                     }
-                    _ => {
-                        return Err(ParseError::new(
-                            equals,
-                            "Invalid assignment target.".to_string(),
-                        ))
-                    }
+                    _ => return Err(ParseError::new(&equals, "Invalid assignment target.")),
                 },
                 Err(e) => return Err(e),
             };
@@ -571,10 +566,7 @@ impl Parser {
                     value: LoxObject::Number(value),
                 }));
             }
-            return Err(ParseError::new(
-                self.previous().clone(),
-                "Expected number".to_string(),
-            ));
+            return Err(ParseError::new(self.previous(), "Expected number"));
         }
         if self.match_token(&[TokenType::String("".to_string())]) {
             if let TokenType::String(value) = &self.previous().token_type {
@@ -582,10 +574,7 @@ impl Parser {
                     value: LoxObject::String(value.to_string()),
                 }));
             }
-            return Err(ParseError::new(
-                self.previous().clone(),
-                "Expected string".to_string(),
-            ));
+            return Err(ParseError::new(self.previous(), "Expected string"));
         }
         if self.match_token(&[TokenType::LeftParen]) {
             let expr = self.expression()?;
@@ -613,10 +602,7 @@ impl Parser {
                 name: self.previous().clone(),
             }));
         }
-        Err(ParseError::new(
-            self.peek().clone(),
-            "Expect expression.".to_string(),
-        ))
+        Err(ParseError::new(self.peek(), "Expect expression."))
     }
 
     fn synchronize(&mut self) {
@@ -655,7 +641,7 @@ impl Parser {
         if self.check(&token_type) {
             return Ok(self.advance());
         }
-        Err(ParseError::new(self.peek().clone(), message.to_string()))
+        Err(ParseError::new(self.peek(), message))
     }
 
     fn check(&self, token_type: &TokenType) -> bool {

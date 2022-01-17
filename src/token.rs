@@ -14,11 +14,11 @@ pub struct Token {
 }
 
 impl Token {
-    pub fn new(token_type: TokenType, lexeme: String, line: usize) -> Self {
+    pub fn new(token_type: TokenType, lexeme: &str, line: usize) -> Self {
         let _id = TOKEN_ID.fetch_add(1, Ordering::SeqCst);
         Self {
             token_type,
-            lexeme,
+            lexeme: lexeme.to_string(),
             line,
             _id,
         }
