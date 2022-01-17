@@ -137,6 +137,15 @@ impl AstVisitor for Interpreter {
                     .borrow_mut()
                     .define(&name.lexeme, LoxObject::Nil);
 
+                if let Some(superclass) = &superclass {
+                    self.enviroment =
+                        Rc::new(RefCell::new(Enviroment::enclosed(self.enviroment.clone())));
+                    self.enviroment.borrow_mut().define(
+                        "super",
+                        LoxObject::Callable(LoxCallable::Class(superclass.clone())),
+                    );
+                }
+
                 let mut _methods = HashMap::new();
                 for method in methods {
                     let method_name = if let Stmt::Function { name, .. } = *method.clone() {
@@ -155,8 +164,14 @@ impl AstVisitor for Interpreter {
                 let klass = LoxObject::Callable(LoxCallable::Class(Rc::new(LoxClass::new(
                     &name.lexeme,
                     _methods,
-                    superclass,
+                    superclass.clone(),
                 ))));
+
+                if superclass.is_some() {
+                    let enclosing = self.enviroment.borrow().enclosing.clone().unwrap();
+                    self.enviroment = enclosing;
+                }
+
                 self.enviroment.borrow_mut().assign(name, klass)?;
                 Ok(LoxObject::Nil)
             }
@@ -197,6 +212,35 @@ impl AstVisitor for Interpreter {
                     Ok(value)
                 } else {
                     Err(RuntimeError::new(name, "Only instances have fields"))
+                }
+            }
+            Expr::Super { method, .. } => {
+                let distance = self.locals.get(expr).unwrap();
+                let superclass = self
+                    .enviroment
+                    .borrow()
+                    .get_at(*distance, "super".to_string())?;
+                let object = self
+                    .enviroment
+                    .borrow()
+                    .get_at(*distance - 1, "this".to_string())?;
+
+                let _method = match superclass {
+                    LoxObject::Callable(callable) => match callable {
+                        LoxCallable::Class(c) => c.find_method(&method.lexeme),
+                        _ => panic!("Super"),
+                    },
+                    _ => panic!("Super"),
+                };
+
+                match _method {
+                    Some(method) => Ok(LoxObject::Callable(LoxCallable::Function(Rc::new(
+                        method.bind(object),
+                    )))),
+                    None => Err(RuntimeError::new(
+                        method,
+                        &format!("Undefined property '{}'.", method.lexeme),
+                    )),
                 }
             }
             Expr::This { keyword } => self.look_up_variable(keyword, expr),

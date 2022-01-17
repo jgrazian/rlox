@@ -51,6 +51,7 @@ enum FunctionType {
 enum ClassType {
     None,
     Class,
+    Subclass,
 }
 
 #[derive(Debug)]
@@ -189,7 +190,14 @@ impl AstVisitor for Resolver {
                         ));
                     }
 
+                    self.current_class = ClassType::Subclass;
                     self.resolve_expr(superclass)?;
+
+                    self.begin_scope();
+                    self.scopes
+                        .last_mut()
+                        .unwrap()
+                        .insert("super".to_string(), true);
                 }
 
                 self.begin_scope();
@@ -214,6 +222,11 @@ impl AstVisitor for Resolver {
                 }
 
                 self.end_scope();
+
+                if superclass.is_some() {
+                    self.end_scope();
+                }
+
                 self.current_class = enclosing_class;
                 Ok(())
             }
@@ -314,6 +327,17 @@ impl AstVisitor for Resolver {
                 self.resolve_expr(value)?;
                 self.resolve_expr(object)
             }
+            Expr::Super { keyword, .. } => match self.current_class {
+                ClassType::Subclass => self.resolve_local(expr, keyword),
+                ClassType::None => Err(ResolveError::new(
+                    keyword,
+                    "Can't use 'super' outside of a class.",
+                )),
+                _ => Err(ResolveError::new(
+                    keyword,
+                    "Can't use 'super' in a class with no superclass.",
+                )),
+            },
             Expr::This { keyword } => {
                 if self.current_class == ClassType::None {
                     return Err(ResolveError::new(

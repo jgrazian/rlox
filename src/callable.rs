@@ -76,7 +76,7 @@ impl LoxFunction {
         }
     }
 
-    fn bind(&self, instance: LoxObject) -> LoxFunction {
+    pub fn bind(&self, instance: LoxObject) -> LoxFunction {
         let mut enviroment = Enviroment::enclosed(self.closure.clone());
         enviroment.define("this", instance);
         Self {
@@ -153,7 +153,7 @@ impl LoxClass {
         }
     }
 
-    fn find_method(&self, name: &str) -> Option<Rc<LoxFunction>> {
+    pub fn find_method(&self, name: &str) -> Option<Rc<LoxFunction>> {
         match self.methods.borrow().get(name) {
             Some(f) => Some(f.clone()),
             None => match &self.superclass {
