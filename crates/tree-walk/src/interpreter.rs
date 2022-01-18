@@ -14,6 +14,7 @@ pub struct Interpreter {
     pub globals: Rc<RefCell<Enviroment>>,
     locals: HashMap<Expr, usize>,
     pub enviroment: Rc<RefCell<Enviroment>>,
+    output: Vec<String>,
 }
 
 impl AstVisitor for Interpreter {
@@ -55,6 +56,7 @@ impl AstVisitor for Interpreter {
             }
             Stmt::Print { expression } => {
                 let value = self.evaluate(expression)?;
+                self.output.push(self.stringify(&value));
                 println!("{}", self.stringify(&value));
                 Ok(LoxObject::Nil)
             }
@@ -365,16 +367,17 @@ impl Interpreter {
             globals: globals.clone(),
             locals: HashMap::new(),
             enviroment: globals.clone(),
+            output: Vec::new(),
         }
     }
 
-    pub fn interpret(&mut self, statements: &Vec<Box<Stmt>>) -> Result<(), LoxError> {
+    pub fn interpret(&mut self, statements: &Vec<Box<Stmt>>) -> Result<Vec<String>, LoxError> {
         for stmt in statements {
             if let Err(e) = self.execute(stmt) {
                 return Err(e);
             }
         }
-        Ok(())
+        Ok(self.output.clone())
     }
 
     fn stringify(&self, value: &LoxObject) -> String {

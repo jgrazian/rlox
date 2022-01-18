@@ -26,7 +26,8 @@ use token::Token;
 pub fn run_file(path: &str) -> Result<(), Box<dyn Error>> {
     let contents = fs::read_to_string(path)?;
 
-    if let Err(e) = run(&contents) {
+    let interpreter = Rc::new(RefCell::new(Interpreter::new()));
+    if let Err(e) = run(&contents, interpreter) {
         match e[0] {
             LoxError::RuntimeError { .. } => {
                 eprintln!("{}", flatten_errors(e, "\n"));
@@ -45,6 +46,7 @@ pub fn run_prompt() -> Result<(), Box<dyn Error>> {
     let reader = io::stdin();
     println!("rlox tree-walk interpreter\ntype 'quit' to exit");
 
+    let interpreter = Rc::new(RefCell::new(Interpreter::new()));
     loop {
         print!("> ");
         io::stdout().flush()?;
@@ -53,14 +55,17 @@ pub fn run_prompt() -> Result<(), Box<dyn Error>> {
         if buffer == "quit\n" {
             break;
         }
-        if let Err(e) = run(&buffer) {
+        if let Err(e) = run(&buffer, interpreter.clone()) {
             eprintln!("{}", flatten_errors(e, "\n"))
         }
     }
     Ok(())
 }
 
-pub fn run(source: &str) -> Result<(), Vec<LoxError>> {
+pub fn run(
+    source: &str,
+    interpreter: Rc<RefCell<Interpreter>>,
+) -> Result<Vec<String>, Vec<LoxError>> {
     let tokens = match Scanner::new(source).scan_tokens() {
         Ok(tokens) => tokens,
         Err(e) => return Err(e),
@@ -71,7 +76,6 @@ pub fn run(source: &str) -> Result<(), Vec<LoxError>> {
         Err(e) => return Err(e),
     };
 
-    let interpreter = Rc::new(RefCell::new(Interpreter::new()));
     Resolver::new(interpreter.clone())
         .resolve_stmt(&statements)
         .map_err(|e| vec![e])?;
@@ -79,8 +83,7 @@ pub fn run(source: &str) -> Result<(), Vec<LoxError>> {
     interpreter
         .borrow_mut()
         .interpret(&statements)
-        .map_err(|e| vec![e])?;
-    Ok(())
+        .map_err(|e| vec![e])
 }
 
 fn flatten_errors(errors: Vec<LoxError>, sep: &str) -> String {
