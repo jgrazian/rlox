@@ -17,7 +17,7 @@ mod scanner;
 mod token;
 mod token_type;
 
-use interpreter::Interpreter;
+pub use interpreter::Interpreter;
 use parser::Parser;
 use resolver::Resolver;
 use scanner::Scanner;
@@ -86,7 +86,7 @@ pub fn run(
         .map_err(|e| vec![e])
 }
 
-fn flatten_errors(errors: Vec<LoxError>, sep: &str) -> String {
+pub fn flatten_errors(errors: Vec<LoxError>, sep: &str) -> String {
     errors
         .into_iter()
         .map(|e| e.to_string())
