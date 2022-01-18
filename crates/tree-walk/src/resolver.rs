@@ -1,43 +1,11 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::error::Error;
-use std::fmt;
 use std::rc::Rc;
 
 use crate::ast::{AstVisitable, AstVisitor, Expr, Stmt};
 use crate::interpreter::Interpreter;
 use crate::token::Token;
-use crate::token_type::TokenType;
-
-#[derive(Debug)]
-pub struct ResolveError {
-    token: Token,
-    message: String,
-}
-impl Error for ResolveError {}
-
-impl ResolveError {
-    fn new(token: &Token, message: &str) -> Self {
-        Self {
-            token: token.clone(),
-            message: message.to_string(),
-        }
-    }
-}
-
-impl fmt::Display for ResolveError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        let location = match self.token.token_type {
-            TokenType::Eof => "end".to_string(),
-            _ => format!("'{}'", self.token.lexeme),
-        };
-        write!(
-            f,
-            "[line {}] Error at {} {}",
-            self.token.line, location, self.message
-        )
-    }
-}
+use crate::LoxError;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 enum FunctionType {
@@ -72,14 +40,14 @@ impl Resolver {
         }
     }
 
-    pub fn resolve_stmt(&mut self, statements: &[Box<Stmt>]) -> Result<(), ResolveError> {
+    pub fn resolve_stmt(&mut self, statements: &[Box<Stmt>]) -> Result<(), LoxError> {
         for stmt in statements {
             stmt.accept(self)?;
         }
         Ok(())
     }
 
-    fn resolve_expr(&mut self, expr: &Expr) -> Result<(), ResolveError> {
+    fn resolve_expr(&mut self, expr: &Expr) -> Result<(), LoxError> {
         expr.accept(self)?;
         Ok(())
     }
@@ -92,13 +60,13 @@ impl Resolver {
         self.scopes.pop();
     }
 
-    fn declare(&mut self, name: &Token) -> Result<(), ResolveError> {
+    fn declare(&mut self, name: &Token) -> Result<(), LoxError> {
         if self.scopes.is_empty() {
             return Ok(());
         }
         let scope = self.scopes.last_mut().unwrap();
         if scope.contains_key(&name.lexeme) {
-            return Err(ResolveError::new(
+            return Err(LoxError::resolve_error(
                 name,
                 "Already a variable with this name in this scope.",
             ));
@@ -107,7 +75,7 @@ impl Resolver {
         Ok(())
     }
 
-    fn define(&mut self, name: &Token) -> Result<(), ResolveError> {
+    fn define(&mut self, name: &Token) -> Result<(), LoxError> {
         if self.scopes.is_empty() {
             return Ok(());
         }
@@ -118,7 +86,7 @@ impl Resolver {
         Ok(())
     }
 
-    fn resolve_local(&mut self, expr: &Expr, name: &Token) -> Result<(), ResolveError> {
+    fn resolve_local(&mut self, expr: &Expr, name: &Token) -> Result<(), LoxError> {
         for (i, scope) in self.scopes.iter().enumerate().rev() {
             if scope.contains_key(&name.lexeme) {
                 self.interpreter
@@ -135,7 +103,7 @@ impl Resolver {
         params: &[Token],
         body: &[Box<Stmt>],
         function_type: FunctionType,
-    ) -> Result<(), ResolveError> {
+    ) -> Result<(), LoxError> {
         let enclosing_function = self.current_function.clone();
         self.current_function = function_type;
 
@@ -153,7 +121,7 @@ impl Resolver {
 }
 
 impl AstVisitor for Resolver {
-    type Result = Result<(), ResolveError>;
+    type Result = Result<(), LoxError>;
 
     fn visit_stmt(&mut self, stmt: &Stmt) -> Self::Result {
         match stmt {
@@ -178,13 +146,13 @@ impl AstVisitor for Resolver {
                     let super_name = if let Expr::Variable { name } = &**superclass {
                         name.clone()
                     } else {
-                        return Err(ResolveError::new(
+                        return Err(LoxError::resolve_error(
                             name,
                             "Superclass resolution expected a Variable.",
                         ));
                     };
                     if name.lexeme == super_name.lexeme {
-                        return Err(ResolveError::new(
+                        return Err(LoxError::resolve_error(
                             &super_name,
                             "A class can't inherit from itself.",
                         ));
@@ -258,7 +226,7 @@ impl AstVisitor for Resolver {
             Stmt::Print { expression } => self.resolve_expr(expression),
             Stmt::Return { keyword, value, .. } => {
                 if self.current_function == FunctionType::None {
-                    return Err(ResolveError::new(
+                    return Err(LoxError::resolve_error(
                         keyword,
                         "Cannot return from top-level code.",
                     ));
@@ -266,7 +234,7 @@ impl AstVisitor for Resolver {
 
                 if let Some(value) = value {
                     if self.current_function == FunctionType::Initializer {
-                        return Err(ResolveError::new(
+                        return Err(LoxError::resolve_error(
                             keyword,
                             "Can't return a value from an initializer.",
                         ));
@@ -288,7 +256,7 @@ impl AstVisitor for Resolver {
             Expr::Variable { name } => {
                 if let Some(scope) = self.scopes.last() {
                     if scope.get(&name.lexeme) == Some(&false) {
-                        return Err(ResolveError::new(
+                        return Err(LoxError::resolve_error(
                             name,
                             "Can't read local variable in its own initializer.",
                         ));
@@ -329,18 +297,18 @@ impl AstVisitor for Resolver {
             }
             Expr::Super { keyword, .. } => match self.current_class {
                 ClassType::Subclass => self.resolve_local(expr, keyword),
-                ClassType::None => Err(ResolveError::new(
+                ClassType::None => Err(LoxError::resolve_error(
                     keyword,
                     "Can't use 'super' outside of a class.",
                 )),
-                _ => Err(ResolveError::new(
+                _ => Err(LoxError::resolve_error(
                     keyword,
                     "Can't use 'super' in a class with no superclass.",
                 )),
             },
             Expr::This { keyword } => {
                 if self.current_class == ClassType::None {
-                    return Err(ResolveError::new(
+                    return Err(LoxError::resolve_error(
                         keyword,
                         "Can't use 'this' outside of a class.",
                     ));

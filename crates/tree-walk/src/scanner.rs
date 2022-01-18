@@ -1,59 +1,20 @@
-use std::error::Error;
-use std::fmt;
-
 use crate::token::Token;
 use crate::token_type::TokenType;
+use crate::LoxError;
 
-#[derive(Debug)]
-pub struct ScanError {
-    line: usize,
-    message: String,
-}
-
-impl ScanError {
-    fn new(line: usize, message: String) -> Self {
-        Self { line, message }
-    }
-}
-
-impl fmt::Display for ScanError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "[line {}] Error {}", self.line, self.message)
-    }
-}
-
-impl Error for ScanError {}
-
-#[derive(Debug)]
-pub struct ScannerError {
-    errors: Vec<ScanError>,
-}
-
-impl ScannerError {
-    fn new() -> Self {
-        Self { errors: Vec::new() }
-    }
-
-    fn push(&mut self, err: ScanError) {
-        self.errors.push(err)
-    }
-}
-
-impl fmt::Display for ScannerError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(
-            f,
-            "{}",
-            self.errors
-                .iter()
-                .map(|e| e.to_string())
-                .collect::<Vec<_>>()
-                .join("\n")
-        )
-    }
-}
-
-impl Error for ScannerError {}
+// impl fmt::Display for ScannerError {
+//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+//         write!(
+//             f,
+//             "{}",
+//             self.errors
+//                 .iter()
+//                 .map(|e| e.to_string())
+//                 .collect::<Vec<_>>()
+//                 .join("\n")
+//         )
+//     }
+// }
 
 #[derive(Debug)]
 pub struct Scanner {
@@ -76,8 +37,8 @@ impl Scanner {
         }
     }
 
-    pub fn scan_tokens(&mut self) -> Result<Vec<Token>, ScannerError> {
-        let mut errors = ScannerError::new();
+    pub fn scan_tokens(&mut self) -> Result<Vec<Token>, Vec<LoxError>> {
+        let mut errors = Vec::new();
         while !self.is_at_end() {
             self.start = self.current;
             if let Err(e) = self.scan_token() {
@@ -87,14 +48,14 @@ impl Scanner {
 
         self.tokens.push(Token::new(TokenType::Eof, "", self.line));
 
-        if errors.errors.len() == 0 {
+        if errors.len() == 0 {
             Ok(self.tokens.clone())
         } else {
             Err(errors)
         }
     }
 
-    fn scan_token(&mut self) -> Result<(), ScanError> {
+    fn scan_token(&mut self) -> Result<(), LoxError> {
         let c = self.advance();
         match c {
             ' ' | '\r' | '\t' => (),
@@ -151,9 +112,9 @@ impl Scanner {
             c if c.is_alphabetic() => self.identifier()?,
 
             x @ _ => {
-                return Err(ScanError::new(
+                return Err(LoxError::scan_error(
                     self.line,
-                    format!("Unexpected character {}.", x),
+                    &format!("Unexpected character {}.", x),
                 ))
             }
         }
@@ -161,7 +122,7 @@ impl Scanner {
         Ok(())
     }
 
-    fn string(&mut self) -> Result<(), ScanError> {
+    fn string(&mut self) -> Result<(), LoxError> {
         while self.peek() != '"' && !self.is_at_end() {
             if self.peek() == '\n' {
                 self.line += 1;
@@ -170,10 +131,7 @@ impl Scanner {
         }
 
         if self.is_at_end() {
-            return Err(ScanError::new(
-                self.line,
-                "Unterminated string.".to_string(),
-            ));
+            return Err(LoxError::scan_error(self.line, &"Unterminated string."));
         }
 
         self.advance();
@@ -182,7 +140,7 @@ impl Scanner {
         Ok(())
     }
 
-    fn number(&mut self) -> Result<(), ScanError> {
+    fn number(&mut self) -> Result<(), LoxError> {
         while self.peek().is_digit(10) {
             self.advance();
         }
@@ -197,12 +155,12 @@ impl Scanner {
 
         let value = String::from_iter(&self.chars[self.start..self.current])
             .parse::<f64>()
-            .map_err(|_| ScanError::new(self.line, "Failed to parse as float.".to_string()))?;
+            .map_err(|_| LoxError::scan_error(self.line, "Failed to parse as float."))?;
         self.push_token(TokenType::Number(value));
         Ok(())
     }
 
-    fn identifier(&mut self) -> Result<(), ScanError> {
+    fn identifier(&mut self) -> Result<(), LoxError> {
         while self.peek().is_alphanumeric() || self.peek() == '_' {
             self.advance();
         }
@@ -284,7 +242,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_scan_tokens() -> Result<(), ScannerError> {
+    fn test_scan_tokens() -> Result<(), Vec<LoxError>> {
         let input = vec![
             (TokenType::Eof, ""),
             (TokenType::LeftParen, "("),

@@ -1,7 +1,5 @@
 use std::cell::RefCell;
 use std::collections::HashMap;
-use std::error::Error;
-use std::fmt;
 use std::rc::Rc;
 
 use crate::ast::{AstVisitable, AstVisitor, Expr, LoxObject, Stmt};
@@ -9,28 +7,7 @@ use crate::callable::{Callable, Clock, LoxCallable, LoxClass, LoxFunction};
 use crate::enviroment::Enviroment;
 use crate::token::Token;
 use crate::token_type::TokenType;
-
-#[derive(Debug, Clone)]
-pub struct RuntimeError {
-    pub message: String,
-    pub token: Token,
-}
-impl Error for RuntimeError {}
-
-impl fmt::Display for RuntimeError {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}\n[line {}]", self.message, self.token.line)
-    }
-}
-
-impl RuntimeError {
-    pub fn new(token: &Token, message: &str) -> Self {
-        Self {
-            token: token.clone(),
-            message: message.to_string(),
-        }
-    }
-}
+use crate::LoxError;
 
 #[derive(Debug)]
 pub struct Interpreter {
@@ -40,9 +17,9 @@ pub struct Interpreter {
 }
 
 impl AstVisitor for Interpreter {
-    type Result = Result<LoxObject, RuntimeError>;
+    type Result = Result<LoxObject, LoxError>;
 
-    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<LoxObject, RuntimeError> {
+    fn visit_stmt(&mut self, stmt: &Stmt) -> Result<LoxObject, LoxError> {
         match &stmt {
             Stmt::Expression { expression } => self.evaluate(expression),
             Stmt::Function { name, .. } => {
@@ -125,9 +102,19 @@ impl AstVisitor for Interpreter {
                     match self.evaluate(superclass)? {
                         LoxObject::Callable(callable) => match callable {
                             LoxCallable::Class(c) => Some(c),
-                            _ => return Err(RuntimeError::new(name, "Superclass must be a class")),
+                            _ => {
+                                return Err(LoxError::runtime_error(
+                                    name,
+                                    "Superclass must be a class",
+                                ))
+                            }
                         },
-                        _ => return Err(RuntimeError::new(name, "Superclass must be a class.")),
+                        _ => {
+                            return Err(LoxError::runtime_error(
+                                name,
+                                "Superclass must be a class.",
+                            ))
+                        }
                     }
                 } else {
                     None
@@ -178,7 +165,7 @@ impl AstVisitor for Interpreter {
         }
     }
 
-    fn visit_expr(&mut self, expr: &Expr) -> Result<LoxObject, RuntimeError> {
+    fn visit_expr(&mut self, expr: &Expr) -> Result<LoxObject, LoxError> {
         match expr {
             Expr::Literal { value } => Ok(value.clone()),
             Expr::Logical {
@@ -211,7 +198,7 @@ impl AstVisitor for Interpreter {
                     instance.set(&name, value.clone());
                     Ok(value)
                 } else {
-                    Err(RuntimeError::new(name, "Only instances have fields"))
+                    Err(LoxError::runtime_error(name, "Only instances have fields"))
                 }
             }
             Expr::Super { method, .. } => {
@@ -237,7 +224,7 @@ impl AstVisitor for Interpreter {
                     Some(method) => Ok(LoxObject::Callable(LoxCallable::Function(Rc::new(
                         method.bind(object),
                     )))),
-                    None => Err(RuntimeError::new(
+                    None => Err(LoxError::runtime_error(
                         method,
                         &format!("Undefined property '{}'.", method.lexeme),
                     )),
@@ -287,7 +274,7 @@ impl AstVisitor for Interpreter {
                         (LoxObject::Number(left), LoxObject::Number(right)) => {
                             Ok(LoxObject::Number(left + right))
                         }
-                        _ => Err(RuntimeError::new(
+                        _ => Err(LoxError::runtime_error(
                             operator,
                             &format!(
                                 "Expected two numbers or two strings found {:?} {:?}",
@@ -319,14 +306,14 @@ impl AstVisitor for Interpreter {
                 let function = match callee {
                     LoxObject::Callable(callable) => callable,
                     _ => {
-                        return Err(RuntimeError::new(
+                        return Err(LoxError::runtime_error(
                             paren,
                             &format!("Can't call non-callable {:?}", callee),
                         ))
                     }
                 };
                 if function.arity() != args.len() {
-                    return Err(RuntimeError::new(
+                    return Err(LoxError::runtime_error(
                         paren,
                         &format!(
                             "Expected {} arguments found {}",
@@ -342,7 +329,7 @@ impl AstVisitor for Interpreter {
                 let object = self.evaluate(object)?;
                 match object {
                     LoxObject::Instance(instance) => instance.get(&name),
-                    _ => Err(RuntimeError::new(
+                    _ => Err(LoxError::runtime_error(
                         name,
                         &format!("Can't get {} on {:?}", name.lexeme, object),
                     )),
@@ -381,7 +368,7 @@ impl Interpreter {
         }
     }
 
-    pub fn interpret(&mut self, statements: &Vec<Box<Stmt>>) -> Result<(), RuntimeError> {
+    pub fn interpret(&mut self, statements: &Vec<Box<Stmt>>) -> Result<(), LoxError> {
         for stmt in statements {
             if let Err(e) = self.execute(stmt) {
                 return Err(e);
@@ -394,11 +381,11 @@ impl Interpreter {
         value.to_string()
     }
 
-    fn evaluate(&mut self, expr: &Expr) -> Result<LoxObject, RuntimeError> {
+    fn evaluate(&mut self, expr: &Expr) -> Result<LoxObject, LoxError> {
         expr.accept(self)
     }
 
-    fn execute(&mut self, stmt: &Stmt) -> Result<LoxObject, RuntimeError> {
+    fn execute(&mut self, stmt: &Stmt) -> Result<LoxObject, LoxError> {
         stmt.accept(self)
     }
 
@@ -406,7 +393,7 @@ impl Interpreter {
         self.locals.insert(expr.clone(), depth);
     }
 
-    fn look_up_variable(&self, name: &Token, expr: &Expr) -> Result<LoxObject, RuntimeError> {
+    fn look_up_variable(&self, name: &Token, expr: &Expr) -> Result<LoxObject, LoxError> {
         if let Some(depth) = self.locals.get(expr) {
             let env = self.enviroment.borrow();
             let value = env.get_at(*depth, name.lexeme.clone())?;
@@ -420,7 +407,7 @@ impl Interpreter {
         &mut self,
         statements: &[Box<Stmt>],
         enviroment: Enviroment,
-    ) -> Result<LoxObject, RuntimeError> {
+    ) -> Result<LoxObject, LoxError> {
         let previous = self.enviroment.clone();
         self.enviroment = Rc::new(RefCell::new(enviroment));
 
@@ -447,10 +434,10 @@ impl Interpreter {
     }
 }
 
-fn number(operator: &Token, literal: &LoxObject) -> Result<f64, RuntimeError> {
+fn number(operator: &Token, literal: &LoxObject) -> Result<f64, LoxError> {
     match literal {
         LoxObject::Number(value) => Ok(*value),
-        _ => Err(RuntimeError::new(
+        _ => Err(LoxError::runtime_error(
             operator,
             &format!("Expected number found {:?}", literal),
         )),

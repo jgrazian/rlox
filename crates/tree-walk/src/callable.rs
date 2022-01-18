@@ -8,8 +8,9 @@ use std::rc::Rc;
 use crate::ast::LoxObject;
 use crate::ast::Stmt;
 use crate::enviroment::Enviroment;
-use crate::interpreter::{Interpreter, RuntimeError};
+use crate::interpreter::Interpreter;
 use crate::token::Token;
+use crate::LoxError;
 
 pub trait Callable: Debug + Display {
     fn arity(&self) -> usize;
@@ -18,7 +19,7 @@ pub trait Callable: Debug + Display {
         &self,
         interpreter: &mut Interpreter,
         arguments: Vec<LoxObject>,
-    ) -> Result<LoxObject, RuntimeError>;
+    ) -> Result<LoxObject, LoxError>;
 }
 
 #[derive(Debug, Clone)]
@@ -48,7 +49,7 @@ impl Callable for LoxCallable {
         &self,
         interpreter: &mut Interpreter,
         arguments: Vec<LoxObject>,
-    ) -> Result<LoxObject, RuntimeError> {
+    ) -> Result<LoxObject, LoxError> {
         match self {
             Self::Function(f) => f.call(interpreter, arguments),
             Self::Class(c) => c.call(interpreter, arguments),
@@ -110,7 +111,7 @@ impl Callable for LoxFunction {
         &self,
         interpreter: &mut Interpreter,
         arguments: Vec<LoxObject>,
-    ) -> Result<LoxObject, RuntimeError> {
+    ) -> Result<LoxObject, LoxError> {
         let mut env = Enviroment::enclosed(self.closure.clone());
 
         if let Stmt::Function { params, body, .. } = &*self.declaration {
@@ -189,7 +190,7 @@ impl Callable for LoxClass {
         &self,
         interpreter: &mut Interpreter,
         arguments: Vec<LoxObject>,
-    ) -> Result<LoxObject, RuntimeError> {
+    ) -> Result<LoxObject, LoxError> {
         *self.instance_count.borrow_mut() += 1;
 
         let instance = LoxInstance::new(self.clone(), *self.instance_count.borrow());
@@ -218,7 +219,7 @@ impl LoxInstance {
         }
     }
 
-    pub fn get(&self, name: &Token) -> Result<LoxObject, RuntimeError> {
+    pub fn get(&self, name: &Token) -> Result<LoxObject, LoxError> {
         match self.fields.borrow().get(&name.lexeme) {
             Some(o) => Ok(o.clone()),
             None => {
@@ -226,7 +227,7 @@ impl LoxInstance {
                     let fun = method.bind(LoxObject::Instance(self.clone()));
                     Ok(LoxObject::Callable(LoxCallable::Function(Rc::new(fun))))
                 } else {
-                    Err(RuntimeError::new(
+                    Err(LoxError::runtime_error(
                         name,
                         &format!(
                             "Instance of {} has no field {}",
@@ -267,7 +268,7 @@ impl Callable for Clock {
         &self,
         _interpreter: &mut Interpreter,
         _arguments: Vec<LoxObject>,
-    ) -> Result<LoxObject, RuntimeError> {
+    ) -> Result<LoxObject, LoxError> {
         Ok(LoxObject::Number(
             std::time::SystemTime::now()
                 .duration_since(std::time::SystemTime::UNIX_EPOCH)

@@ -3,8 +3,8 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use crate::ast::LoxObject;
-use crate::interpreter::RuntimeError;
 use crate::token::Token;
+use crate::LoxError;
 
 #[derive(Debug, Clone)]
 pub struct Enviroment {
@@ -31,12 +31,12 @@ impl Enviroment {
         self.values.insert(name.to_string(), value);
     }
 
-    pub fn get(&self, name: &Token) -> Result<LoxObject, RuntimeError> {
+    pub fn get(&self, name: &Token) -> Result<LoxObject, LoxError> {
         match self.values.get(&name.lexeme) {
             Some(value) => Ok(value.clone()),
             None => match &self.enclosing {
                 Some(enclosed) => enclosed.borrow().get(name),
-                None => Err(RuntimeError::new(
+                None => Err(LoxError::runtime_error(
                     name,
                     &format!("Undefined variable '{}'.", name),
                 )),
@@ -44,7 +44,7 @@ impl Enviroment {
         }
     }
 
-    pub fn get_at(&self, distance: usize, name: String) -> Result<LoxObject, RuntimeError> {
+    pub fn get_at(&self, distance: usize, name: String) -> Result<LoxObject, LoxError> {
         if distance == 0 {
             Ok(self.values.get(&name).unwrap().clone())
         } else {
@@ -66,7 +66,7 @@ impl Enviroment {
         dive(&self.enclosing.as_ref().unwrap(), distance - 1)
     }
 
-    pub fn assign(&mut self, name: &Token, value: LoxObject) -> Result<(), RuntimeError> {
+    pub fn assign(&mut self, name: &Token, value: LoxObject) -> Result<(), LoxError> {
         match self.values.get_mut(&name.lexeme) {
             Some(_value) => {
                 *_value = value.clone();
@@ -77,7 +77,7 @@ impl Enviroment {
                     enclosed.borrow_mut().assign(name, value)?;
                     Ok(())
                 }
-                None => Err(RuntimeError::new(
+                None => Err(LoxError::runtime_error(
                     name,
                     &format!("Undefined variable '{}'.", name),
                 )),
@@ -90,7 +90,7 @@ impl Enviroment {
         distance: usize,
         name: &Token,
         value: LoxObject,
-    ) -> Result<(), RuntimeError> {
+    ) -> Result<(), LoxError> {
         if distance == 0 {
             self.values.insert(name.lexeme.clone(), value);
         } else {
