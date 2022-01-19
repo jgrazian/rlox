@@ -2,5 +2,6 @@
 /* eslint-disable */
 /**
 * @param {string} source
+* @returns {string}
 */
-export function run(source: string): void;
+export function run(source: string): string;

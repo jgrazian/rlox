@@ -47,6 +47,9 @@
     <script type="module">
         import { CodeJar } from './codejar.js'
         import { withLineNumbers } from './linenumbers.js'
+        import { run } from './rlox/rlox_lib.js'
+
+        console.log(run('print "Hello, World!"'))
 
         const editor = document.querySelector('.editor')
 
