@@ -13,5 +13,6 @@ name = "rlox_lib"
 
 [dependencies]
 tree-walk = { path = "../tree-walk" }
+bytecode = { path = "../bytecode" }
 
 wasm-bindgen = "0.2.78"
