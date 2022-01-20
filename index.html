@@ -4,72 +4,111 @@
 <head>
     <meta charset="UTF-8">
     <title>rlox - Rusty Lox Lang</title>
+    <link rel="stylesheet" href="styles.css">
     <link href="https://fonts.googleapis.com/css2?family=Source+Code+Pro&display=swap" rel="stylesheet">
-    <link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.18.1/styles/github.min.css" rel="stylesheet">
-    <style>
-        * {
-            margin: 0;
-            padding: 0;
-            box-sizing: border-box;
-        }
-
-        body {
-            min-height: 100vh;
-            background: #F6F8F8;
-        }
-
-        main {
-            max-width: 800px;
-            margin: 40px auto;
-            padding: 20px;
-        }
-
-        .editor {
-            background: #fff;
-            border-radius: 6px;
-            box-shadow: 0 2px 2px 0 rgba(0, 0, 0, 0.14), 0 1px 5px 0 rgba(0, 0, 0, 0.12), 0 3px 1px -2px rgba(0, 0, 0, 0.2);
-            font-family: "Source Code Pro", monospace;
-            font-size: 14px;
-            font-weight: 400;
-            min-height: 240px;
-            letter-spacing: normal;
-            line-height: 20px;
-            padding: 10px;
-            tab-size: 4;
-        }
-    </style>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.18.1/styles/github.min.css" rel="stylesheet"
+        disabled="true">
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.18.1/styles/dracula.min.css" rel="stylesheet">
+    <meta name="viewport" content="width=device-width" />
 </head>
 
 <body>
     <main>
-        <div class="editor language-js"></div>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr;">
+            <button class="btn btn-run">Run -></button>
+            <h1>rlox</h1>
+        </div>
+        <div class="split-editor">
+            <div class="code language-lox hljs" data-gramm="false" spellcheck="false"
+                style="outline: currentcolor none medium; overflow-wrap: break-word; overflow-y: auto; resize: vertical; white-space: pre-wrap;"
+                contenteditable="true">
+            </div>
+            <div class="preview"
+                style="outline: currentcolor none medium; overflow-wrap: break-word; overflow-y: auto; resize: vertical; white-space: pre-wrap;"
+                contenteditable="false"></div>
+        </div>
     </main>
+
     <script type="module">
         import { CodeJar } from './codejar.js'
         import { withLineNumbers } from './linenumbers.js'
-        import { run } from './rlox/rlox_lib.js'
+        import init, { run } from './rlox/rlox_lib.js'
 
-        console.log(run('print "Hello, World!"'))
+        // Setup WASM
+        await init();
 
-        const editor = document.querySelector('.editor')
+        let lox = () => {
+            return {
+                case_insensitive: true,
+                keywords: {
+                    keyword: 'fun class var for if else while print return or and != == > < >= <=',
+                    literal: 'false true nil this super'
+                },
+                contains: [
+                    {
+                        scope: 'string',
+                        begin: '"', end: '"'
+                    },
+                    {
+                        scope: 'variable',
+                        begin: /(?<=var )\w+/,
+                        end: /(?=\s*=)/,
+                    },
+                    {
+                        scope: 'title.class',
+                        begin: /(?<=class )\w+/,
+                        end: /(?=\s*[\{<])/,
+                    },
+                    {
+                        scope: 'title.function',
+                        begin: /(?<=fun )\w+/,
+                        end: /(?=\s*())/,
+                    },
+                    hljs.COMMENT(
+                        '//', // begin
+                        '//', // end
+                    )
+                ]
+            }
+        }
+        hljs.registerLanguage("lox", lox)
+
+        const editor = document.querySelector('.split-editor .code')
+        const preview = document.querySelector('.split-editor .preview')
 
         const highlight = editor => {
             // highlight.js does not trim old tags,
             // let's do it by this hack.
             editor.textContent = editor.textContent
-            hljs.highlightBlock(editor)
+            hljs.highlightElement(editor)
         }
 
-        const jar = CodeJar(editor, withLineNumbers(highlight), {
+        const jar = CodeJar(editor, highlight, {
             indentOn: /[(\[{]$/
         })
 
-        jar.updateCode(localStorage.getItem('code'))
+        jar.updateCode(`fun fib(n) {
+\tif (n < 2) return n;
+\treturn fib(n - 1) + fib(n - 2); 
+}
+
+print fib(10);`)
+
         jar.onUpdate(code => {
             localStorage.setItem('code', code)
         })
+
+        // Handle button
+        const btn = document.querySelector('.btn')
+        btn.addEventListener('click', () => {
+            localStorage.setItem('code', editor.textContent)
+            // jar_out.updateCode(run(jar.toString()))
+            console.log(run(jar.toString()))
+            preview.textContent = run(jar.toString())
+        })
+
     </script>
-    <script src="https://cdnjs.cloudflare.com/ajax/libs/highlight.js/9.18.1/highlight.min.js"></script>
+    <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.4.0/highlight.min.js"></script>
 </body>
 
 </html>
