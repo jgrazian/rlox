@@ -1,5 +1,7 @@
 use std::{error::Error, fmt::Display};
 
+use crate::compiler::compile;
+
 use crate::chunk::{
     Chunk,
     OpCode::{self, *},
@@ -33,7 +35,9 @@ pub struct Vm<'c> {
 
 impl<'c> Vm<'c> {
     pub fn interpret(source: &str) -> Result<(), InterpretError> {
-        unimplemented!()
+        compile(source)?;
+
+        Ok(())
 
         // let mut vm = Self {
         //     chunk,

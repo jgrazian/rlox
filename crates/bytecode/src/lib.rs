@@ -5,7 +5,9 @@ use std::io::Write;
 use std::process;
 
 mod chunk;
+mod compiler;
 mod debug;
+mod scanner;
 mod vm;
 
 use chunk::*;
