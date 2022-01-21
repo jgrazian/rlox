@@ -15,7 +15,12 @@ fn main() -> Result<(), Box<dyn Error>> {
         }
     } else {
         match args.len() {
-            _ => Ok(bytecode::run()),
+            1 => bytecode::repl(),
+            2 => bytecode::run_file(&args[1]),
+            _ => {
+                println!("Usage: rlox [script]");
+                process::exit(64)
+            }
         }
     }
 }
