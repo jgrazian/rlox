@@ -1,4 +1,8 @@
-use crate::chunk::{Chunk, OpCode::*, Value};
+use crate::chunk::{
+    Chunk,
+    OpCode::{self, *},
+    Value,
+};
 
 const STACK_MAX: usize = 256;
 
@@ -10,6 +14,7 @@ pub enum InterpretResult {
 
 pub struct Vm<'c> {
     chunk: &'c Chunk,
+    ip: usize,
     stack: [Value; STACK_MAX],
     stack_top: usize,
 }
@@ -18,6 +23,7 @@ impl<'c> Vm<'c> {
     pub fn interpret(chunk: &'c Chunk) -> InterpretResult {
         let mut vm = Self {
             chunk,
+            ip: 0,
             stack: [Value::default(); STACK_MAX],
             stack_top: 0,
         };
@@ -26,6 +32,14 @@ impl<'c> Vm<'c> {
     }
 
     fn run(&mut self) -> InterpretResult {
+        macro_rules! read_byte {
+            () => {{
+                let v: OpCode = self.chunk.code[self.ip].into();
+                self.ip += 1;
+                v
+            }};
+        }
+
         macro_rules! binary_op {
             ($op: tt) => {
                 {
@@ -35,18 +49,23 @@ impl<'c> Vm<'c> {
             };
         }
 
-        for (_i, instruction) in self.chunk.code.iter().enumerate() {
+        loop {
             #[cfg(feature = "debug_trace_execution")]
             {
                 print!("          ");
                 self.stack.iter().for_each(|v| print!("[ {} ]", v));
                 print!("\n");
-                println!("{}", self.chunk.debug_op(_i, instruction));
+                println!(
+                    "{}",
+                    self.chunk
+                        .debug_op(self.ip, &self.chunk.code[self.ip].into())
+                );
             }
+            let instruction: OpCode = read_byte!();
 
             match instruction {
-                OpConstant(c) => {
-                    let constant = self.chunk.constants[*c as usize];
+                OpConstant => {
+                    let constant = self.chunk.constants[read_byte!() as usize];
                     self.push(constant);
                 }
                 OpAdd => binary_op!(+),
