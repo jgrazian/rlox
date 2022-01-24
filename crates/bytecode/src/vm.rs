@@ -1,3 +1,7 @@
+use std::{error::Error, fmt::Display};
+
+use crate::compiler::compile;
+
 use crate::chunk::{
     Chunk,
     OpCode::{self, *},
@@ -6,10 +10,20 @@ use crate::chunk::{
 
 const STACK_MAX: usize = 256;
 
-pub enum InterpretResult {
-    Ok,
+#[derive(Debug)]
+pub enum InterpretError {
     CompileError,
     RuntimeError,
+}
+impl Error for InterpretError {}
+
+impl Display for InterpretError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            InterpretError::CompileError => write!(f, "CompileError"),
+            InterpretError::RuntimeError => write!(f, "RuntimeError"),
+        }
+    }
 }
 
 pub struct Vm<'c> {
@@ -20,18 +34,21 @@ pub struct Vm<'c> {
 }
 
 impl<'c> Vm<'c> {
-    pub fn interpret(chunk: &'c Chunk) -> InterpretResult {
-        let mut vm = Self {
-            chunk,
-            ip: 0,
-            stack: [Value::default(); STACK_MAX],
-            stack_top: 0,
-        };
+    pub fn interpret(source: &str) -> Result<(), InterpretError> {
+        compile(source)?;
 
-        vm.run()
+        Ok(())
+
+        // let mut vm = Self {
+        //     chunk,
+        //     ip: 0,
+        //     stack: [Value::default(); STACK_MAX],
+        //     stack_top: 0,
+        // };
+        // vm.run()
     }
 
-    fn run(&mut self) -> InterpretResult {
+    fn run(&mut self) -> Result<(), InterpretError> {
         macro_rules! read_byte {
             () => {{
                 let v: OpCode = self.chunk.code[self.ip].into();
@@ -77,12 +94,12 @@ impl<'c> Vm<'c> {
                 }
                 OpReturn => {
                     println!("{}", self.pop());
-                    return InterpretResult::Ok;
+                    return Ok(());
                 }
             }
         }
 
-        InterpretResult::Ok
+        Ok(())
     }
 
     fn reset_stack(&mut self) {
