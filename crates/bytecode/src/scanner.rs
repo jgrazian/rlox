@@ -1,6 +1,7 @@
 use core::iter::Peekable;
 use core::str::CharIndices;
 
+#[derive(Debug)]
 pub struct Scanner<'s> {
     source: &'s str,
     iter: Peekable<CharIndices<'s>>,
@@ -21,6 +22,7 @@ impl<'s> Scanner<'s> {
     }
 
     pub fn scan_token(&mut self) -> Token {
+        // Remove whitespace
         loop {
             match self.iter.peek() {
                 None => break,
@@ -36,14 +38,17 @@ impl<'s> Scanner<'s> {
                         let tmp_iter = self.iter.clone();
                         self.iter.next();
                         match self.iter.peek() {
-                            Some((_, '/')) => loop {
-                                match self.iter.peek() {
-                                    None | Some((_, '\n')) => break,
-                                    Some(_) => {
-                                        self.advance();
+                            Some((_, '/')) => {
+                                self.current += 1;
+                                loop {
+                                    match self.iter.peek() {
+                                        None | Some((_, '\n')) => break,
+                                        Some(_) => {
+                                            self.advance();
+                                        }
                                     }
                                 }
-                            },
+                            }
                             _ => {
                                 self.iter = tmp_iter;
                                 break;
@@ -105,11 +110,15 @@ impl<'s> Scanner<'s> {
                 '0'..='9' => {
                     loop {
                         match self.iter.peek() {
-                            None => break,
                             Some((_, c)) => match c {
                                 '0'..='9' => self.advance(),
+                                'a'..='z' | 'A'..='Z' => {
+                                    return self
+                                        .error_token("Identifiers can not begin with a number.")
+                                }
                                 _ => break,
                             },
+                            None => break,
                         };
                     }
 
@@ -120,13 +129,13 @@ impl<'s> Scanner<'s> {
 
                                 loop {
                                     match self.iter.peek() {
-                                        None => break,
-                                        Some((_, c)) => match c {
-                                            '0'..='9' => self.advance(),
-                                            _ => break,
-                                        },
+                                        Some((_, '0'..='9')) => self.advance(),
+                                        _ => break,
                                     };
                                 }
+                            }
+                            Some(' ') => {
+                                self.advance();
                             }
                             _ => (),
                         },
@@ -155,10 +164,7 @@ impl<'s> Scanner<'s> {
     fn advance(&mut self) -> Option<char> {
         match self.iter.next() {
             Some((_, c)) => {
-                self.current = match self.iter.peek() {
-                    Some((i, _)) => *i,
-                    None => self.current,
-                };
+                self.current += c.len_utf8();
                 Some(c)
             }
             _ => None,
@@ -176,14 +182,11 @@ impl<'s> Scanner<'s> {
     }
 
     fn peek_next(&mut self) -> Option<char> {
-        let tmp_iter = self.iter.clone();
-        self.iter.next();
-        match self.iter.peek() {
+        let mut tmp_iter = self.iter.clone();
+        tmp_iter.next();
+        match tmp_iter.peek() {
             Some((_, c)) => Some(*c),
-            _ => {
-                self.iter = tmp_iter;
-                None
-            }
+            _ => None,
         }
     }
 
@@ -248,6 +251,7 @@ impl<'s> Scanner<'s> {
     }
 }
 
+#[derive(Debug, PartialEq)]
 pub struct Token<'s> {
     pub ty: TokenType,
     pub lexeme: &'s str,
@@ -299,4 +303,172 @@ pub enum TokenType {
     // -
     Error,
     Eof,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    macro_rules! test_scan {
+        ($name: tt, $lexeme: literal, $ty: expr) => {
+            #[test]
+            fn $name() {
+                let mut scanner = Scanner::new($lexeme);
+                let token = scanner.scan_token();
+                assert_eq!(
+                    token,
+                    Token {
+                        ty: $ty,
+                        lexeme: $lexeme,
+                        line: 1
+                    }
+                )
+            }
+        };
+    }
+
+    test_scan!(scan_paren_left, "(", TokenType::LeftParen);
+    test_scan!(scan_paren_right, ")", TokenType::RightParen);
+    test_scan!(scan_brace_left, "{", TokenType::LeftBrance);
+    test_scan!(scan_brace_right, "}", TokenType::RightBrace);
+    test_scan!(scan_comma, ",", TokenType::Comma);
+    test_scan!(scan_dot, ".", TokenType::Dot);
+    test_scan!(scan_minus, "-", TokenType::Minus);
+    test_scan!(scan_plus, "+", TokenType::Plus);
+    test_scan!(scan_semicolon, ";", TokenType::Semicolon);
+    test_scan!(scan_slash, "/", TokenType::Slash);
+    test_scan!(scan_star, "*", TokenType::Star);
+    test_scan!(scan_bang, "!", TokenType::Bang);
+    test_scan!(scan_bang_equal, "!=", TokenType::BangEqual);
+    test_scan!(scan_equal, "=", TokenType::Equal);
+    test_scan!(scan_equal_equal, "==", TokenType::EqualEqual);
+    test_scan!(scan_greater, ">", TokenType::Greater);
+    test_scan!(scan_greater_equal, ">=", TokenType::GreaterEqual);
+    test_scan!(scan_less, "<", TokenType::Less);
+    test_scan!(scan_less_equal, "<=", TokenType::LessEqual);
+    test_scan!(scan_and, "and", TokenType::And);
+    test_scan!(scan_class, "class", TokenType::Class);
+    test_scan!(scan_else, "else", TokenType::Else);
+    test_scan!(scan_false, "false", TokenType::False);
+    test_scan!(scan_for, "for", TokenType::For);
+    test_scan!(scan_fun, "fun", TokenType::Fun);
+    test_scan!(scan_if, "if", TokenType::If);
+    test_scan!(scan_nil, "nil", TokenType::Nil);
+    test_scan!(scan_or, "or", TokenType::Or);
+    test_scan!(scan_print, "print", TokenType::Print);
+    test_scan!(scan_return, "return", TokenType::Return);
+    test_scan!(scan_super, "super", TokenType::Super);
+    test_scan!(scan_this, "this", TokenType::This);
+    test_scan!(scan_true, "true", TokenType::True);
+    test_scan!(scan_var, "var", TokenType::Var);
+    test_scan!(scan_while, "while", TokenType::While);
+    test_scan!(scan_eof, "", TokenType::Eof);
+
+    #[test]
+    fn scan_identifier() {
+        let mut scanner = Scanner::new("ident ident1 1ident");
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                ty: TokenType::Identifier,
+                lexeme: "ident",
+                line: 1
+            }
+        );
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                ty: TokenType::Identifier,
+                lexeme: "ident1",
+                line: 1
+            }
+        );
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                ty: TokenType::Error,
+                lexeme: "Identifiers can not begin with a number.",
+                line: 1
+            }
+        );
+    }
+
+    #[test]
+    fn scan_number() {
+        let mut scanner = Scanner::new("3 3. 3.14");
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                ty: TokenType::Number,
+                lexeme: "3",
+                line: 1
+            }
+        );
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                ty: TokenType::Number,
+                lexeme: "3.",
+                line: 1
+            }
+        );
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                ty: TokenType::Number,
+                lexeme: "3.14",
+                line: 1
+            }
+        );
+    }
+
+    #[test]
+    fn scan_string() {
+        let mut scanner = Scanner::new(r#""string" "and or false true 123" "broken"#);
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                ty: TokenType::String,
+                lexeme: r#""string""#,
+                line: 1
+            }
+        );
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                ty: TokenType::String,
+                lexeme: r#""and or false true 123""#,
+                line: 1
+            }
+        );
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                ty: TokenType::Error,
+                lexeme: "Unterminated string.",
+                line: 1
+            }
+        );
+    }
+
+    #[test]
+    fn scan_whitespace() {
+        let mut scanner = Scanner::new("    (\n//This is a comment\n)");
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                ty: TokenType::LeftParen,
+                lexeme: "(",
+                line: 1
+            }
+        );
+        assert_eq!(
+            scanner.scan_token(),
+            Token {
+                ty: TokenType::RightParen,
+                lexeme: ")",
+                line: 3
+            }
+        );
+    }
 }
