@@ -26,26 +26,26 @@ impl Display for InterpretError {
     }
 }
 
-pub struct Vm<'c> {
-    chunk: &'c Chunk,
+pub struct Vm {
+    chunk: Chunk,
     ip: usize,
     stack: [Value; STACK_MAX],
     stack_top: usize,
 }
 
-impl<'c> Vm<'c> {
+impl Vm {
     pub fn interpret(source: &str) -> Result<(), InterpretError> {
-        compile(source)?;
+        let mut chunk = Chunk::new();
 
-        Ok(())
+        compile(source, &mut chunk)?;
 
-        // let mut vm = Self {
-        //     chunk,
-        //     ip: 0,
-        //     stack: [Value::default(); STACK_MAX],
-        //     stack_top: 0,
-        // };
-        // vm.run()
+        let mut vm = Self {
+            chunk,
+            ip: 0,
+            stack: [Value::default(); STACK_MAX],
+            stack_top: 0,
+        };
+        vm.run()
     }
 
     fn run(&mut self) -> Result<(), InterpretError> {

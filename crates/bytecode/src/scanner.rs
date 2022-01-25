@@ -21,7 +21,7 @@ impl<'s> Scanner<'s> {
         }
     }
 
-    pub fn scan_token(&mut self) -> Token {
+    pub fn scan_token(&mut self) -> Token<'s> {
         // Remove whitespace
         loop {
             match self.iter.peek() {
@@ -234,7 +234,7 @@ impl<'s> Scanner<'s> {
         }
     }
 
-    pub fn token(&self, ty: TokenType) -> Token {
+    pub fn token(&self, ty: TokenType) -> Token<'s> {
         Token {
             ty,
             lexeme: &self.source[self.start..self.current],
@@ -242,7 +242,7 @@ impl<'s> Scanner<'s> {
         }
     }
 
-    pub fn error_token(&self, message: &'static str) -> Token {
+    pub fn error_token(&self, message: &'static str) -> Token<'s> {
         Token {
             ty: TokenType::Error,
             lexeme: message,
@@ -251,7 +251,7 @@ impl<'s> Scanner<'s> {
     }
 }
 
-#[derive(Debug, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Token<'s> {
     pub ty: TokenType,
     pub lexeme: &'s str,
