@@ -70,14 +70,19 @@ impl Chunk {
         }
     }
 
-    pub fn write_op<T: Into<u8>>(&mut self, op: T, line: usize) {
+    pub fn push_byte<T: Into<u8>>(&mut self, op: T, line: usize) {
         self.lines.push(line);
         self.code.push(op.into());
     }
 
-    pub fn add_constant(&mut self, value: Value) -> u8 {
+    pub fn push_constant(&mut self, value: Value) -> u8 {
         self.constants.push(value);
         (self.constants.len() - 1) as u8
+    }
+
+    pub fn disassemble(&self, name: &str) {
+        println!("== {} ==", name);
+        print!("{:?}", self);
     }
 }
 

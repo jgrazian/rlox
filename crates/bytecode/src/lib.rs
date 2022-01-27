@@ -6,7 +6,7 @@ use std::process;
 
 mod chunk;
 mod compiler;
-mod debug;
+mod error;
 mod scanner;
 mod vm;
 

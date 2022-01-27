@@ -1,6 +1,5 @@
-use std::{error::Error, fmt::Display};
-
 use crate::compiler::compile;
+use crate::error::LoxError;
 
 use crate::chunk::{
     Chunk,
@@ -10,22 +9,6 @@ use crate::chunk::{
 
 const STACK_MAX: usize = 256;
 
-#[derive(Debug)]
-pub enum InterpretError {
-    CompileError,
-    RuntimeError,
-}
-impl Error for InterpretError {}
-
-impl Display for InterpretError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            InterpretError::CompileError => write!(f, "CompileError"),
-            InterpretError::RuntimeError => write!(f, "RuntimeError"),
-        }
-    }
-}
-
 pub struct Vm {
     chunk: Chunk,
     ip: usize,
@@ -34,7 +17,7 @@ pub struct Vm {
 }
 
 impl Vm {
-    pub fn interpret(source: &str) -> Result<(), InterpretError> {
+    pub fn interpret(source: &str) -> Result<(), LoxError> {
         let mut chunk = Chunk::new();
 
         compile(source, &mut chunk)?;
@@ -48,7 +31,7 @@ impl Vm {
         vm.run()
     }
 
-    fn run(&mut self) -> Result<(), InterpretError> {
+    fn run(&mut self) -> Result<(), LoxError> {
         macro_rules! read_byte {
             () => {{
                 let v: OpCode = self.chunk.code[self.ip].into();
@@ -98,8 +81,6 @@ impl Vm {
                 }
             }
         }
-
-        Ok(())
     }
 
     fn reset_stack(&mut self) {
