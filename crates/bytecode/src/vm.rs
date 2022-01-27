@@ -1,11 +1,10 @@
-use crate::compiler::Compiler;
-use crate::error::LoxError;
-
 use crate::chunk::{
     Chunk,
     OpCode::{self, *},
-    Value,
 };
+use crate::compiler::Compiler;
+use crate::error::LoxError;
+use crate::value::Value;
 
 const STACK_MAX: usize = 256;
 
@@ -18,6 +17,7 @@ pub struct Vm {
 
 impl Vm {
     pub fn interpret(source: &str) -> Result<(), LoxError> {
+        const NIL: Value = Value::Nil;
         let mut chunk = Chunk::new();
 
         Compiler::new(source, &mut chunk).compile()?;
@@ -25,7 +25,7 @@ impl Vm {
         let mut vm = Self {
             chunk,
             ip: 0,
-            stack: [Value::Nil; STACK_MAX],
+            stack: [NIL; STACK_MAX],
             stack_top: 0,
         };
         vm.run()
@@ -34,9 +34,8 @@ impl Vm {
     fn run(&mut self) -> Result<(), LoxError> {
         macro_rules! read_byte {
             () => {{
-                let v: OpCode = self.chunk.code[self.ip].into();
                 self.ip += 1;
-                v
+                self.chunk.code[self.ip - 1]
             }};
         }
 
@@ -44,9 +43,10 @@ impl Vm {
             ($value_type: expr, $op: tt) => {
                 {
                     match (self.peek(0), self.peek(1)) {
-                        (Value::Number(_), Value::Number(a)) => {
+                        (Value::Number(_), Value::Number(_)) => {
                             let b = self.pop().as_number();
-                            self.stack[self.stack_top - 1] = $value_type(a $op b);
+                            let a = self.pop().as_number();
+                            self.push($value_type(a $op b));
                         },
                         _ => return self.runtime_error("Operands must be numbers."),
                     }
@@ -66,20 +66,19 @@ impl Vm {
                         .debug_op(self.ip, &self.chunk.code[self.ip].into())
                 );
             }
-            let instruction: OpCode = read_byte!();
 
-            match instruction {
+            match read_byte!().into() {
                 OpConstant => {
-                    let constant = self.chunk.constants[read_byte!() as usize];
+                    let constant = self.chunk.constants[read_byte!() as usize].clone();
                     self.push(constant);
                 }
                 OpNil => self.push(Value::Nil),
                 OpTrue => self.push(Value::Bool(true)),
                 OpFalse => self.push(Value::Bool(false)),
                 OpEqual => {
-                    let b = self.pop();
-                    let a = self.pop();
-                    self.push(Value::Bool(a == b))
+                    let (a, b) = self.pop2();
+                    let v = Value::Bool(a == b);
+                    self.push(v)
                 }
                 OpGreater => binary_op!(Value::Bool, >),
                 OpLess => binary_op!(Value::Bool, <),
@@ -115,13 +114,21 @@ impl Vm {
         self.stack_top += 1;
     }
 
-    fn pop(&mut self) -> Value {
+    fn pop(&mut self) -> &Value {
         self.stack_top -= 1;
-        self.stack[self.stack_top]
+        &self.stack[self.stack_top]
     }
 
-    fn peek(&self, distance: usize) -> Value {
-        self.stack[self.stack_top - 1 - distance]
+    fn pop2(&mut self) -> (&Value, &Value) {
+        self.stack_top -= 1;
+        let b = &self.stack[self.stack_top];
+        self.stack_top -= 1;
+        let a = &self.stack[self.stack_top];
+        (a, b)
+    }
+
+    fn peek(&self, distance: usize) -> &Value {
+        &self.stack[self.stack_top - 1 - distance]
     }
 
     fn runtime_error<T: Into<String>>(&mut self, message: T) -> Result<(), LoxError> {

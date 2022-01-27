@@ -7,7 +7,9 @@ use std::process;
 mod chunk;
 mod compiler;
 mod error;
+mod object;
 mod scanner;
+mod value;
 mod vm;
 
 pub fn repl() -> Result<(), Box<dyn Error>> {

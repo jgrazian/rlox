@@ -1,6 +1,7 @@
-use crate::chunk::{Chunk, OpCode, Value};
+use crate::chunk::{Chunk, OpCode};
 use crate::error::LoxError;
 use crate::scanner::{Scanner, Token, TokenType};
+use crate::value::Value;
 
 struct Parser<'s> {
     scanner: Scanner<'s>,
