@@ -160,7 +160,7 @@ impl<'s> Compiler<'s> {
                 return Err(self.error("Parse failure.").into());
             }
         };
-        self.emit_constant(value)
+        self.emit_constant(Value::Number(value))
     }
 
     fn grouping(&mut self) -> Result<(), LoxError> {

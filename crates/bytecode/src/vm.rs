@@ -25,7 +25,7 @@ impl Vm {
         let mut vm = Self {
             chunk,
             ip: 0,
-            stack: [Value::default(); STACK_MAX],
+            stack: [Value::Nil; STACK_MAX],
             stack_top: 0,
         };
         vm.run()
@@ -41,10 +41,15 @@ impl Vm {
         }
 
         macro_rules! binary_op {
-            ($op: tt) => {
+            ($value_type: expr, $op: tt) => {
                 {
-                    let b = self.pop();
-                    self.stack[self.stack_top - 1] = self.stack[self.stack_top - 1] $op b;
+                    match (self.peek(0), self.peek(1)) {
+                        (Value::Number(_), Value::Number(a)) => {
+                            let b = self.pop().as_number();
+                            self.stack[self.stack_top - 1] = $value_type(a $op b);
+                        },
+                        _ => return self.runtime_error("Operands must be numbers."),
+                    }
                 }
             };
         }
@@ -68,12 +73,19 @@ impl Vm {
                     let constant = self.chunk.constants[read_byte!() as usize];
                     self.push(constant);
                 }
-                OpAdd => binary_op!(+),
-                OpSubtract => binary_op!(-),
-                OpMultiply => binary_op!(*),
-                OpDivide => binary_op!(/),
+                OpAdd => binary_op!(Value::Number, +),
+                OpSubtract => binary_op!(Value::Number, -),
+                OpMultiply => binary_op!(Value::Number, *),
+                OpDivide => binary_op!(Value::Number, /),
                 OpNegate => {
-                    self.stack[self.stack_top - 1] = -self.stack[self.stack_top - 1];
+                    match self.peek(0) {
+                        Value::Number(_) => {
+                            let v = Value::Number(-self.pop().as_number());
+                            self.push(v)
+                        }
+                        _ => return self.runtime_error("Operand must be a number."),
+                    }
+                    // self.stack[self.stack_top - 1] = -self.stack[self.stack_top - 1];
                 }
                 OpReturn => {
                     println!("{}", self.pop());
@@ -95,5 +107,19 @@ impl Vm {
     fn pop(&mut self) -> Value {
         self.stack_top -= 1;
         self.stack[self.stack_top]
+    }
+
+    fn peek(&self, distance: usize) -> Value {
+        self.stack[self.stack_top - 1 - distance]
+    }
+
+    fn runtime_error<T: Into<String>>(&self, message: T) -> Result<(), LoxError> {
+        let instruction = self.chunk.code[self.ip - 1] as usize;
+        let line = self.chunk.lines[instruction];
+        Err(LoxError::RuntimeError(format!(
+            "{}\n[line {}] in script\n",
+            message.into(),
+            line
+        )))
     }
 }

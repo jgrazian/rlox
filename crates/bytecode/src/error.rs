@@ -5,7 +5,7 @@ use std::fmt::Display;
 pub enum LoxError {
     Errors(Vec<LoxError>),
     UnknownError,
-    RuntimeError,
+    RuntimeError(String),
     CompileError {
         message: String,
         location: String,
@@ -26,7 +26,7 @@ impl Display for LoxError {
                 writeln!(f, "{}", error)?;
             }),
             LoxError::UnknownError => write!(f, "Unknown error"),
-            LoxError::RuntimeError => write!(f, "RuntimeError"),
+            LoxError::RuntimeError(s) => write!(f, "{}", s),
             LoxError::CompileError {
                 message,
                 location,

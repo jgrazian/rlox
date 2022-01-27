@@ -1,9 +1,40 @@
 use std::fmt;
 
-pub type Value = f64;
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Value {
+    Bool(bool),
+    Nil,
+    Number(f64),
+}
 
+impl Value {
+    pub fn as_bool(&self) -> bool {
+        match self {
+            Value::Bool(b) => *b,
+            _ => panic!("Value is not a bool"),
+        }
+    }
+
+    pub fn as_number(&self) -> f64 {
+        match self {
+            Value::Number(v) => *v,
+            _ => panic!("Value is not a number"),
+        }
+    }
+}
+
+impl fmt::Display for Value {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum OpCode {
     OpConstant,
+    OpNil,
+    OpTrue,
+    OpFalse,
     OpAdd,
     OpSubtract,
     OpMultiply,
@@ -55,9 +86,10 @@ impl From<OpCode> for u8 {
     }
 }
 
+#[derive(Clone, PartialEq)]
 pub struct Chunk {
     pub code: Vec<u8>,
-    lines: Vec<usize>,
+    pub lines: Vec<usize>,
     pub constants: Vec<Value>,
 }
 
