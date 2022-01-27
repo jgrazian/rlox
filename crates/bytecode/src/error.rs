@@ -31,12 +31,12 @@ impl Display for LoxError {
                 message,
                 location,
                 line,
-            } => write!(f, "[line {}] Error{}: {}", line, location, message),
+            } => write!(f, "[line {}] CompileError{}: {}", line, location, message),
             LoxError::ParseError {
                 message,
                 location,
                 line,
-            } => write!(f, "[line {}] Error{}: {}", line, location, message),
+            } => write!(f, "[line {}] ParseError{}: {}", line, location, message),
         }
     }
 }

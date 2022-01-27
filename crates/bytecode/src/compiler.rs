@@ -3,7 +3,7 @@ use crate::error::LoxError;
 use crate::scanner::{Scanner, Token, TokenType};
 
 struct Parser<'s> {
-    scanner: &'s mut Scanner<'s>,
+    scanner: Scanner<'s>,
     current: Token<'s>,
     previous: Token<'s>,
     had_error: bool,
@@ -11,9 +11,9 @@ struct Parser<'s> {
 }
 
 impl<'s> Parser<'s> {
-    fn new(scanner: &'s mut Scanner<'s>) -> Self {
+    fn new(source: &'s str) -> Self {
         Self {
-            scanner,
+            scanner: Scanner::new(source),
             current: Token {
                 ty: TokenType::Eof,
                 lexeme: "",
@@ -127,20 +127,20 @@ struct ParseRule<'s> {
     precedence: Precedence,
 }
 
-struct Compiler<'s> {
-    parser: &'s mut Parser<'s>,
+pub struct Compiler<'s> {
+    parser: Parser<'s>,
     compiling_chunk: &'s mut Chunk,
 }
 
 impl<'s> Compiler<'s> {
-    fn new(parser: &'s mut Parser<'s>, compiling_chunk: &'s mut Chunk) -> Self {
+    pub fn new(source: &'s str, compiling_chunk: &'s mut Chunk) -> Self {
         Self {
-            parser,
+            parser: Parser::new(source),
             compiling_chunk,
         }
     }
 
-    fn compile(&mut self) -> Result<(), LoxError> {
+    pub fn compile(&mut self) -> Result<(), LoxError> {
         self.parser.advance()?;
         self.expression()?;
         self.parser
@@ -173,6 +173,7 @@ impl<'s> Compiler<'s> {
         let operator_type = self.parser.previous.ty;
         self.parse_precedence(Precedence::Unary)?;
         match operator_type {
+            TokenType::Bang => self.emit_byte(OpCode::OpNot),
             TokenType::Minus => self.emit_byte(OpCode::OpNegate),
             _ => unreachable!("Expected unary operator."),
         }
@@ -185,10 +186,26 @@ impl<'s> Compiler<'s> {
         self.parse_precedence(rule.precedence.bump())?;
 
         match operator_type {
+            TokenType::BangEqual => self.emit_bytes(OpCode::OpEqual, OpCode::OpNot),
+            TokenType::EqualEqual => self.emit_byte(OpCode::OpEqual),
+            TokenType::Greater => self.emit_byte(OpCode::OpGreater),
+            TokenType::GreaterEqual => self.emit_bytes(OpCode::OpLess, OpCode::OpNot),
+            TokenType::Less => self.emit_byte(OpCode::OpLess),
+            TokenType::LessEqual => self.emit_bytes(OpCode::OpGreater, OpCode::OpNot),
             TokenType::Plus => self.emit_byte(OpCode::OpAdd),
             TokenType::Minus => self.emit_byte(OpCode::OpSubtract),
             TokenType::Star => self.emit_byte(OpCode::OpMultiply),
             TokenType::Slash => self.emit_byte(OpCode::OpDivide),
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    fn literal(&mut self) -> Result<(), LoxError> {
+        match self.parser.previous.ty {
+            TokenType::False => self.emit_byte(OpCode::OpFalse),
+            TokenType::Nil => self.emit_byte(OpCode::OpNil),
+            TokenType::True => self.emit_byte(OpCode::OpTrue),
             _ => unreachable!(),
         }
         Ok(())
@@ -304,6 +321,29 @@ impl<'s> Compiler<'s> {
                 infix: None,
                 precedence: Precedence::None,
             },
+            TokenType::False | TokenType::True | TokenType::Nil => ParseRule {
+                prefix: Some(Self::literal),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            TokenType::Bang => ParseRule {
+                prefix: Some(Self::unary),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            TokenType::BangEqual | TokenType::EqualEqual => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::Equality,
+            },
+            TokenType::Greater
+            | TokenType::GreaterEqual
+            | TokenType::Less
+            | TokenType::LessEqual => ParseRule {
+                prefix: None,
+                infix: Some(Self::binary),
+                precedence: Precedence::Comparison,
+            },
             _ => ParseRule {
                 prefix: None,
                 infix: None,
@@ -311,16 +351,4 @@ impl<'s> Compiler<'s> {
             },
         }
     }
-}
-
-pub fn compile(source: &str, chunk: &mut Chunk) -> Result<(), LoxError> {
-    let mut scanner = Scanner::new(source);
-    let mut parser = Parser::new(&mut scanner);
-    let mut compiler = Compiler::new(&mut parser, chunk);
-
-    compiler.compile()
-
-    // parser.advance();
-    // parser.expression();
-    // parser.consume(TokenType::Eof, "Expect end of expression.")
 }

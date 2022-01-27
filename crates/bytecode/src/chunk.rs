@@ -10,22 +10,34 @@ pub enum Value {
 impl Value {
     pub fn as_bool(&self) -> bool {
         match self {
-            Value::Bool(b) => *b,
+            Self::Bool(b) => *b,
             _ => panic!("Value is not a bool"),
         }
     }
 
     pub fn as_number(&self) -> f64 {
         match self {
-            Value::Number(v) => *v,
+            Self::Number(v) => *v,
             _ => panic!("Value is not a number"),
+        }
+    }
+
+    pub fn is_falsey(&self) -> bool {
+        match self {
+            Self::Nil | Self::Bool(false) => true,
+            _ => false,
         }
     }
 }
 
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        write!(f, "{}", self)
+        match self {
+            Self::Bool(true) => write!(f, "true"),
+            Self::Bool(false) => write!(f, "false"),
+            Self::Nil => write!(f, "nil"),
+            Self::Number(n) => write!(f, "{}", n),
+        }
     }
 }
 
@@ -35,10 +47,14 @@ pub enum OpCode {
     OpNil,
     OpTrue,
     OpFalse,
+    OpEqual,
+    OpGreater,
+    OpLess,
     OpAdd,
     OpSubtract,
     OpMultiply,
     OpDivide,
+    OpNot,
     OpNegate,
     OpReturn,
 }
@@ -46,43 +62,21 @@ pub enum OpCode {
 impl OpCode {
     fn size(&self) -> usize {
         match self {
-            OpCode::OpConstant => 2,
-            OpCode::OpAdd => 1,
-            OpCode::OpSubtract => 1,
-            OpCode::OpMultiply => 1,
-            OpCode::OpDivide => 1,
-            OpCode::OpNegate => 1,
-            OpCode::OpReturn => 1,
+            Self::OpConstant => 2,
+            _ => 1,
         }
     }
 }
 
 impl From<u8> for OpCode {
     fn from(v: u8) -> Self {
-        match v {
-            0 => OpCode::OpConstant,
-            1 => OpCode::OpAdd,
-            2 => OpCode::OpSubtract,
-            3 => OpCode::OpMultiply,
-            4 => OpCode::OpDivide,
-            5 => OpCode::OpNegate,
-            6 => OpCode::OpReturn,
-            _ => panic!("Unknown opcode {}", v),
-        }
+        unsafe { std::mem::transmute::<u8, OpCode>(v) }
     }
 }
 
 impl From<OpCode> for u8 {
     fn from(v: OpCode) -> Self {
-        match v {
-            OpCode::OpConstant => 0,
-            OpCode::OpAdd => 1,
-            OpCode::OpSubtract => 2,
-            OpCode::OpMultiply => 3,
-            OpCode::OpDivide => 4,
-            OpCode::OpNegate => 5,
-            OpCode::OpReturn => 6,
-        }
+        v as u8
     }
 }
 
@@ -141,10 +135,17 @@ impl Chunk {
                 self.code[offset + 1],
                 self.constants[self.code[offset + 1] as usize]
             ),
+            OpCode::OpNil => "OP_NIL".to_string(),
+            OpCode::OpTrue => "OP_TRUE".to_string(),
+            OpCode::OpFalse => "OP_FALSE".to_string(),
+            OpCode::OpEqual => "OP_EQUAL".to_string(),
+            OpCode::OpGreater => "OP_GREATER".to_string(),
+            OpCode::OpLess => "OP_LESS".to_string(),
             OpCode::OpAdd => "OP_ADD".to_string(),
             OpCode::OpSubtract => "OP_SUBTRACT".to_string(),
             OpCode::OpMultiply => "OP_MULTIPLY".to_string(),
             OpCode::OpDivide => "OP_DIVIDE".to_string(),
+            OpCode::OpNot => "OP_NOT".to_string(),
             OpCode::OpNegate => "OP_NEGATE".to_string(),
             OpCode::OpReturn => "OP_RETURN".to_string(),
         };

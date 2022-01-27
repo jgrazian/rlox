@@ -1,4 +1,4 @@
-use crate::compiler::compile;
+use crate::compiler::Compiler;
 use crate::error::LoxError;
 
 use crate::chunk::{
@@ -20,7 +20,7 @@ impl Vm {
     pub fn interpret(source: &str) -> Result<(), LoxError> {
         let mut chunk = Chunk::new();
 
-        compile(source, &mut chunk)?;
+        Compiler::new(source, &mut chunk).compile()?;
 
         let mut vm = Self {
             chunk,
@@ -73,20 +73,31 @@ impl Vm {
                     let constant = self.chunk.constants[read_byte!() as usize];
                     self.push(constant);
                 }
+                OpNil => self.push(Value::Nil),
+                OpTrue => self.push(Value::Bool(true)),
+                OpFalse => self.push(Value::Bool(false)),
+                OpEqual => {
+                    let b = self.pop();
+                    let a = self.pop();
+                    self.push(Value::Bool(a == b))
+                }
+                OpGreater => binary_op!(Value::Bool, >),
+                OpLess => binary_op!(Value::Bool, <),
                 OpAdd => binary_op!(Value::Number, +),
                 OpSubtract => binary_op!(Value::Number, -),
                 OpMultiply => binary_op!(Value::Number, *),
                 OpDivide => binary_op!(Value::Number, /),
-                OpNegate => {
-                    match self.peek(0) {
-                        Value::Number(_) => {
-                            let v = Value::Number(-self.pop().as_number());
-                            self.push(v)
-                        }
-                        _ => return self.runtime_error("Operand must be a number."),
-                    }
-                    // self.stack[self.stack_top - 1] = -self.stack[self.stack_top - 1];
+                OpNot => {
+                    let v = Value::Bool(self.pop().is_falsey());
+                    self.push(v)
                 }
+                OpNegate => match self.peek(0) {
+                    Value::Number(_) => {
+                        let v = Value::Number(-self.pop().as_number());
+                        self.push(v)
+                    }
+                    _ => return self.runtime_error("Operand must be a number."),
+                },
                 OpReturn => {
                     println!("{}", self.pop());
                     return Ok(());
@@ -113,9 +124,10 @@ impl Vm {
         self.stack[self.stack_top - 1 - distance]
     }
 
-    fn runtime_error<T: Into<String>>(&self, message: T) -> Result<(), LoxError> {
+    fn runtime_error<T: Into<String>>(&mut self, message: T) -> Result<(), LoxError> {
         let instruction = self.chunk.code[self.ip - 1] as usize;
         let line = self.chunk.lines[instruction];
+        self.reset_stack();
         Err(LoxError::RuntimeError(format!(
             "{}\n[line {}] in script\n",
             message.into(),
