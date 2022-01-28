@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::fmt;
 
 use crate::object::Obj;
@@ -62,11 +63,11 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Bool(true) => write!(f, "true"),
-            Self::Bool(false) => write!(f, "false"),
-            Self::Nil => write!(f, "nil"),
-            Self::Number(n) => write!(f, "{}", n),
-            Self::Obj(o) => write!(f, "{}", o),
+            Self::Bool(true) => fmt::Display::fmt("true", f),
+            Self::Bool(false) => fmt::Display::fmt("false", f),
+            Self::Nil => fmt::Display::fmt("nil", f),
+            Self::Number(n) => fmt::Display::fmt(n, f),
+            Self::Obj(o) => fmt::Display::fmt(o, f),
         }
     }
 }

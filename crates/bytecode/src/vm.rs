@@ -1,3 +1,5 @@
+use std::collections::HashMap;
+
 use crate::chunk::{
     Chunk,
     OpCode::{self, *},
@@ -14,22 +16,29 @@ pub struct Vm {
     ip: usize,
     stack: [Value; STACK_MAX],
     stack_top: usize,
+    globals: HashMap<String, Value>,
 }
 
 impl Vm {
-    pub fn interpret(source: &str) -> Result<(), LoxError> {
+    pub fn new() -> Self {
         const NIL: Value = Value::Nil;
-        let mut chunk = Chunk::new();
-
-        Compiler::new(source, &mut chunk).compile()?;
-
-        let mut vm = Self {
-            chunk,
+        Self {
+            chunk: Chunk::new(),
             ip: 0,
             stack: [NIL; STACK_MAX],
             stack_top: 0,
-        };
-        vm.run()
+            globals: HashMap::new(),
+        }
+    }
+
+    pub fn interpret(&mut self, source: &str) -> Result<(), LoxError> {
+        self.chunk = Chunk::new();
+        self.ip = 0;
+        self.stack.fill(Value::Nil);
+        self.stack_top = 0;
+
+        Compiler::new(source, &mut self.chunk).compile()?;
+        self.run()
     }
 
     fn run(&mut self) -> Result<(), LoxError> {
@@ -58,10 +67,10 @@ impl Vm {
         loop {
             #[cfg(feature = "debug_trace_execution")]
             {
-                print!("          ");
-                self.stack.iter().for_each(|v| print!("[ {} ]", v));
-                print!("\n");
-                println!(
+                eprint!("          ");
+                self.stack.iter().for_each(|v| eprint!("[ {:>3} ]", v));
+                eprint!("\n");
+                eprintln!(
                     "{}",
                     self.chunk
                         .debug_op(self.ip, &self.chunk.code[self.ip].into())
@@ -76,6 +85,47 @@ impl Vm {
                 OpNil => self.push(Value::Nil),
                 OpTrue => self.push(Value::Bool(true)),
                 OpFalse => self.push(Value::Bool(false)),
+                OpPop => {
+                    self.pop();
+                }
+                OpGetLocal => {
+                    let slot = read_byte!() as usize;
+                    self.push(self.stack[slot].clone());
+                }
+                OpSetLocal => {
+                    let slot = read_byte!() as usize;
+                    self.stack[slot] = self.peek(0).clone();
+                }
+                OpGetGlobal => {
+                    let name = self.chunk.constants[read_byte!() as usize].as_string();
+
+                    match self.globals.get(name) {
+                        Some(v) => {
+                            let v = v.clone();
+                            self.push(v)
+                        }
+                        None => {
+                            let msg = format!("Undefined variable '{}'.", name);
+                            return self.runtime_error(msg);
+                        }
+                    }
+                }
+                OpDefineGlobal => {
+                    let name = self.chunk.constants[read_byte!() as usize].as_string();
+                    self.globals.insert(name.into(), self.peek(0).clone());
+                    self.pop();
+                }
+                OpSetGlobal => {
+                    let name = self.chunk.constants[read_byte!() as usize].as_string();
+                    let _v = self.peek(0).clone();
+                    match self.globals.get_mut(name) {
+                        Some(v) => *v = _v,
+                        None => {
+                            let msg = format!("Undefined variable '{}'.", name);
+                            return self.runtime_error(msg);
+                        }
+                    }
+                }
                 OpEqual => {
                     let (a, b) = self.pop2();
                     let v = Value::Bool(a == b);
@@ -91,7 +141,7 @@ impl Vm {
                     }
                     (Value::Number(b), Value::Number(a)) => {
                         let v = a + b;
-                        self.stack_top -= 1;
+                        self.stack_top -= 2;
                         self.push(Value::Number(v));
                     }
                     _ => return self.runtime_error("Operands must be two numbers or two strings."),
@@ -110,12 +160,13 @@ impl Vm {
                     }
                     _ => return self.runtime_error("Operand must be a number."),
                 },
-                OpReturn => {
+                OpPrint => {
                     println!("{}", self.pop());
-                    return Ok(());
                 }
+                OpReturn => break,
             }
         }
+        Ok(())
     }
 
     fn reset_stack(&mut self) {
@@ -145,8 +196,7 @@ impl Vm {
     }
 
     fn runtime_error<T: Into<String>>(&mut self, message: T) -> Result<(), LoxError> {
-        let instruction = self.chunk.code[self.ip - 2] as usize;
-        let line = self.chunk.lines[instruction];
+        let line = self.chunk.lines[self.ip - 1];
         self.reset_stack();
         Err(LoxError::RuntimeError(format!(
             "{}\n[line {}] in script",

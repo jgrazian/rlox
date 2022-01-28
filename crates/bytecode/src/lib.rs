@@ -14,10 +14,11 @@ mod vm;
 
 pub fn repl() -> Result<(), Box<dyn Error>> {
     let reader = io::stdin();
-    println!("rlox\ntype 'quit' to exit");
+    eprintln!("rlox\ntype 'quit' to exit");
+    let mut vm = vm::Vm::new();
 
     loop {
-        print!("> ");
+        eprint!("> ");
         io::stdout().flush()?;
         let mut buffer = String::new();
         reader.read_line(&mut buffer)?;
@@ -25,8 +26,8 @@ pub fn repl() -> Result<(), Box<dyn Error>> {
             break;
         }
 
-        match vm::Vm::interpret(&buffer) {
-            Err(e) => println!("{}", e),
+        match vm.interpret(&buffer) {
+            Err(e) => eprintln!("{}", e),
             Ok(()) => (),
         }
     }
@@ -35,11 +36,12 @@ pub fn repl() -> Result<(), Box<dyn Error>> {
 
 pub fn run_file(path: &str) -> Result<(), Box<dyn Error>> {
     let file = fs::read_to_string(path)?;
-    let result = vm::Vm::interpret(&file);
+    let result = vm::Vm::new().interpret(&file);
 
     match result {
         Ok(_) => Ok(()),
         Err(e) => {
+            eprint!("{}", e);
             process::exit(65);
         }
     }

@@ -8,6 +8,12 @@ pub enum OpCode {
     OpNil,
     OpTrue,
     OpFalse,
+    OpPop,
+    OpGetLocal,
+    OpSetLocal,
+    OpGetGlobal,
+    OpDefineGlobal,
+    OpSetGlobal,
     OpEqual,
     OpGreater,
     OpLess,
@@ -17,13 +23,19 @@ pub enum OpCode {
     OpDivide,
     OpNot,
     OpNegate,
+    OpPrint,
     OpReturn,
 }
 
 impl OpCode {
     fn size(&self) -> usize {
         match self {
-            Self::OpConstant => 2,
+            Self::OpConstant
+            | Self::OpGetGlobal
+            | Self::OpDefineGlobal
+            | Self::OpSetGlobal
+            | Self::OpGetLocal
+            | Self::OpSetLocal => 2,
             _ => 1,
         }
     }
@@ -67,6 +79,7 @@ impl Chunk {
         (self.constants.len() - 1) as u8
     }
 
+    #[allow(dead_code)]
     pub fn disassemble(&self, name: &str) {
         println!("== {} ==", name);
         print!("{:?}", self);
@@ -89,16 +102,31 @@ impl fmt::Debug for Chunk {
 
 impl Chunk {
     pub fn debug_op(&self, offset: usize, op: &OpCode) -> String {
+        fn const_instr(chunk: &Chunk, name: &str, offset: usize) -> String {
+            format!(
+                "{:<16} {:>4} '{}'",
+                name,
+                chunk.code[offset + 1],
+                chunk.constants[chunk.code[offset + 1] as usize]
+            )
+        }
+
+        fn byte_instr(chunk: &Chunk, name: &str, offset: usize) -> String {
+            let slot = chunk.code[offset + 1] as usize;
+            format!("{:<16} {:>4}", name, slot)
+        }
+
         let repr = match op {
-            OpCode::OpConstant => format!(
-                "{:<16} {:04} {}",
-                "OP_CONSTANT",
-                self.code[offset + 1],
-                self.constants[self.code[offset + 1] as usize]
-            ),
+            OpCode::OpConstant => const_instr(self, "OP_CONST", offset),
             OpCode::OpNil => "OP_NIL".to_string(),
             OpCode::OpTrue => "OP_TRUE".to_string(),
             OpCode::OpFalse => "OP_FALSE".to_string(),
+            OpCode::OpPop => "OP_POP".to_string(),
+            OpCode::OpGetLocal => byte_instr(self, "OP_GET_LOCAL", offset),
+            OpCode::OpSetLocal => byte_instr(self, "OP_SET_LOCAL", offset),
+            OpCode::OpGetGlobal => const_instr(self, "OP_GET_GLOBAL", offset),
+            OpCode::OpDefineGlobal => const_instr(self, "OP_DEFINE_GLOBAL", offset),
+            OpCode::OpSetGlobal => const_instr(self, "OP_SET_GLOBAL", offset),
             OpCode::OpEqual => "OP_EQUAL".to_string(),
             OpCode::OpGreater => "OP_GREATER".to_string(),
             OpCode::OpLess => "OP_LESS".to_string(),
@@ -108,6 +136,7 @@ impl Chunk {
             OpCode::OpDivide => "OP_DIVIDE".to_string(),
             OpCode::OpNot => "OP_NOT".to_string(),
             OpCode::OpNegate => "OP_NEGATE".to_string(),
+            OpCode::OpPrint => "OP_PRINT".to_string(),
             OpCode::OpReturn => "OP_RETURN".to_string(),
         };
 
