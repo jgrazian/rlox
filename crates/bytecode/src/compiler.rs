@@ -1,5 +1,6 @@
 use crate::chunk::{Chunk, OpCode};
 use crate::error::LoxError;
+use crate::object::Obj;
 use crate::scanner::{Scanner, Token, TokenType};
 use crate::value::Value;
 
@@ -162,6 +163,13 @@ impl<'s> Compiler<'s> {
             }
         };
         self.emit_constant(Value::Number(value))
+    }
+
+    fn string(&mut self) -> Result<(), LoxError> {
+        let mut chars = self.parser.previous.lexeme.chars();
+        chars.next();
+        chars.next_back();
+        self.emit_constant(Value::Obj(Box::new(Obj::String(chars.collect()))))
     }
 
     fn grouping(&mut self) -> Result<(), LoxError> {
@@ -344,6 +352,11 @@ impl<'s> Compiler<'s> {
                 prefix: None,
                 infix: Some(Self::binary),
                 precedence: Precedence::Comparison,
+            },
+            TokenType::String => ParseRule {
+                prefix: Some(Self::string),
+                infix: None,
+                precedence: Precedence::None,
             },
             _ => ParseRule {
                 prefix: None,

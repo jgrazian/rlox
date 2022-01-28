@@ -32,9 +32,28 @@ impl Value {
         }
     }
 
+    pub fn as_string(&self) -> &str {
+        match self {
+            Self::Obj(o) => match &**o {
+                Obj::String(s) => s,
+            },
+            _ => panic!("Value is not a obj"),
+        }
+    }
+
     pub fn is_falsey(&self) -> bool {
         match self {
             Self::Nil | Self::Bool(false) => true,
+            _ => false,
+        }
+    }
+
+    pub fn is_string(&self) -> bool {
+        match self {
+            Self::Obj(o) => match **o {
+                Obj::String(_) => true,
+                _ => false,
+            },
             _ => false,
         }
     }
@@ -47,7 +66,7 @@ impl fmt::Display for Value {
             Self::Bool(false) => write!(f, "false"),
             Self::Nil => write!(f, "nil"),
             Self::Number(n) => write!(f, "{}", n),
-            _ => write!(f, "???"),
+            Self::Obj(o) => write!(f, "{}", o),
         }
     }
 }

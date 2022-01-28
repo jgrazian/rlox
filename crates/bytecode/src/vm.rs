@@ -4,6 +4,7 @@ use crate::chunk::{
 };
 use crate::compiler::Compiler;
 use crate::error::LoxError;
+use crate::object::Obj;
 use crate::value::Value;
 
 const STACK_MAX: usize = 256;
@@ -43,10 +44,10 @@ impl Vm {
             ($value_type: expr, $op: tt) => {
                 {
                     match (self.peek(0), self.peek(1)) {
-                        (Value::Number(_), Value::Number(_)) => {
-                            let b = self.pop().as_number();
-                            let a = self.pop().as_number();
-                            self.push($value_type(a $op b));
+                        (Value::Number(b), Value::Number(a)) => {
+                            let v = a $op b;
+                            self.stack_top -= 2;
+                            self.push($value_type(v));
                         },
                         _ => return self.runtime_error("Operands must be numbers."),
                     }
@@ -82,7 +83,19 @@ impl Vm {
                 }
                 OpGreater => binary_op!(Value::Bool, >),
                 OpLess => binary_op!(Value::Bool, <),
-                OpAdd => binary_op!(Value::Number, +),
+                OpAdd => match (self.peek(0), self.peek(1)) {
+                    (b, a) if b.is_string() && a.is_string() => {
+                        let (s1, s2) = self.pop2();
+                        let s = s1.as_string().to_owned() + s2.as_string();
+                        self.push(Value::Obj(Box::new(Obj::String(s))))
+                    }
+                    (Value::Number(b), Value::Number(a)) => {
+                        let v = a + b;
+                        self.stack_top -= 1;
+                        self.push(Value::Number(v));
+                    }
+                    _ => return self.runtime_error("Operands must be two numbers or two strings."),
+                },
                 OpSubtract => binary_op!(Value::Number, -),
                 OpMultiply => binary_op!(Value::Number, *),
                 OpDivide => binary_op!(Value::Number, /),
@@ -132,11 +145,11 @@ impl Vm {
     }
 
     fn runtime_error<T: Into<String>>(&mut self, message: T) -> Result<(), LoxError> {
-        let instruction = self.chunk.code[self.ip - 1] as usize;
+        let instruction = self.chunk.code[self.ip - 2] as usize;
         let line = self.chunk.lines[instruction];
         self.reset_stack();
         Err(LoxError::RuntimeError(format!(
-            "{}\n[line {}] in script\n",
+            "{}\n[line {}] in script",
             message.into(),
             line
         )))
