@@ -49,8 +49,12 @@ impl<'s> Parser<'s> {
         result
     }
 
+    fn check_token(&self, ty: TokenType) -> bool {
+        self.current.ty == ty
+    }
+
     fn consume(&mut self, ty: TokenType, message: &str) -> Result<(), LoxError> {
-        if self.current.ty == ty {
+        if self.check_token(ty) {
             return self.advance();
         }
 
@@ -58,10 +62,6 @@ impl<'s> Parser<'s> {
             Some(e) => Err(e),
             None => Ok(()),
         }
-    }
-
-    fn check_token(&self, ty: TokenType) -> bool {
-        self.current.ty == ty
     }
 
     fn match_token(&mut self, ty: TokenType) -> Result<bool, LoxError> {
@@ -187,6 +187,35 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
+    fn declaration(&mut self) -> Result<(), LoxError> {
+        if self.parser.match_token(TokenType::Var)? {
+            self.var_declaration()?;
+        } else {
+            self.statement()?;
+        }
+
+        if self.parser.panic_mode {
+            self.synchronize()?;
+        }
+        Ok(())
+    }
+
+    fn var_declaration(&mut self) -> Result<(), LoxError> {
+        let global = self.parse_variable("Expected variable name.")?;
+
+        if self.parser.match_token(TokenType::Equal)? {
+            self.expression()?;
+        } else {
+            self.emit_byte(OpCode::OpNil);
+        }
+        self.parser.consume(
+            TokenType::Semicolon,
+            "Expect ';' after variable declaration.",
+        )?;
+        self.define_variable(global);
+        Ok(())
+    }
+
     fn expression(&mut self) -> Result<(), LoxError> {
         self.parse_precedence(Precedence::Assignment)
     }
@@ -267,12 +296,9 @@ impl<'s> Compiler<'s> {
             .consume(TokenType::LeftParen, "Expect '(' after 'while'.")?;
         if self.parser.match_token(TokenType::Semicolon)? {
             // No initializer.
-            dbg!("No initializer");
         } else if self.parser.match_token(TokenType::Var)? {
-            dbg!("Initializer: var");
             self.var_declaration()?;
         } else {
-            dbg!("Initializer: expression");
             self.expression_statement()?;
         }
 
@@ -312,63 +338,11 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn var_declaration(&mut self) -> Result<(), LoxError> {
-        let global = self.parse_variable("Expected variable name.")?;
-
-        if self.parser.match_token(TokenType::Equal)? {
-            self.expression()?;
-        } else {
-            self.emit_byte(OpCode::OpNil);
-        }
-        self.parser.consume(
-            TokenType::Semicolon,
-            "Expect ';' after variable declaration.",
-        )?;
-        self.define_variable(global);
-        Ok(())
-    }
-
     fn expression_statement(&mut self) -> Result<(), LoxError> {
         self.expression()?;
         self.parser
             .consume(TokenType::Semicolon, "Expect ';' after expression.")?;
         self.emit_byte(OpCode::OpPop);
-        Ok(())
-    }
-
-    fn synchronize(&mut self) -> Result<(), LoxError> {
-        self.parser.panic_mode = false;
-
-        while self.parser.current.ty != TokenType::Eof {
-            if self.parser.previous.ty == TokenType::Semicolon {
-                return Ok(());
-            }
-            match self.parser.current.ty {
-                TokenType::Class
-                | TokenType::Fun
-                | TokenType::Var
-                | TokenType::For
-                | TokenType::If
-                | TokenType::While
-                | TokenType::Print
-                | TokenType::Return => return Ok(()),
-                _ => (),
-            }
-            self.parser.advance()?;
-        }
-        Ok(())
-    }
-
-    fn declaration(&mut self) -> Result<(), LoxError> {
-        if self.parser.match_token(TokenType::Var)? {
-            self.var_declaration()?;
-        } else {
-            self.statement()?;
-        }
-
-        if self.parser.panic_mode {
-            self.synchronize()?;
-        }
         Ok(())
     }
 
@@ -684,6 +658,29 @@ impl<'s> Compiler<'s> {
     }
 
     // Errors
+    fn synchronize(&mut self) -> Result<(), LoxError> {
+        self.parser.panic_mode = false;
+
+        while self.parser.current.ty != TokenType::Eof {
+            if self.parser.previous.ty == TokenType::Semicolon {
+                return Ok(());
+            }
+            match self.parser.current.ty {
+                TokenType::Class
+                | TokenType::Fun
+                | TokenType::Var
+                | TokenType::For
+                | TokenType::If
+                | TokenType::While
+                | TokenType::Print
+                | TokenType::Return => return Ok(()),
+                _ => (),
+            }
+            self.parser.advance()?;
+        }
+        Ok(())
+    }
+
     fn error_at_current(&mut self, message: &str) -> Option<LoxError> {
         self.error_at(self.parser.current, message)
     }

@@ -2,7 +2,7 @@ use std::fmt;
 
 use crate::value::Value;
 
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum OpCode {
     OpConstant,
     OpNil,
@@ -57,7 +57,7 @@ impl From<OpCode> for u8 {
     }
 }
 
-#[derive(PartialEq)]
+#[derive(Clone, PartialEq)]
 pub struct Chunk {
     pub code: Vec<u8>,
     pub lines: Vec<usize>,

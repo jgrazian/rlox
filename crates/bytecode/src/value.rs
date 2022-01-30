@@ -1,4 +1,3 @@
-use std::cell::Cell;
 use std::fmt;
 
 use crate::object::Obj;
@@ -37,6 +36,7 @@ impl Value {
         match self {
             Self::Obj(o) => match &**o {
                 Obj::String(s) => s,
+                _ => panic!("Obj is not a string"),
             },
             _ => panic!("Value is not a obj"),
         }
@@ -53,6 +53,16 @@ impl Value {
         match self {
             Self::Obj(o) => match **o {
                 Obj::String(_) => true,
+                _ => false,
+            },
+            _ => false,
+        }
+    }
+
+    pub fn is_function(&self) -> bool {
+        match self {
+            Self::Obj(o) => match **o {
+                Obj::Function(_) => true,
                 _ => false,
             },
             _ => false,
