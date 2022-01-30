@@ -26,6 +26,7 @@ pub enum OpCode {
     OpPrint,
     OpJump,
     OpJumpIfFalse,
+    OpLoop,
     OpReturn,
 }
 
@@ -38,7 +39,7 @@ impl OpCode {
             | Self::OpSetGlobal
             | Self::OpGetLocal
             | Self::OpSetLocal => 2,
-            Self::OpJump | Self::OpJumpIfFalse => 3,
+            Self::OpJump | Self::OpJumpIfFalse | Self::OpLoop => 3,
             _ => 1,
         }
     }
@@ -152,6 +153,7 @@ impl Chunk {
             OpCode::OpPrint => "OP_PRINT".to_string(),
             OpCode::OpJump => jump_instr(self, "OP_JUMP", offset, 1),
             OpCode::OpJumpIfFalse => jump_instr(self, "OP_JUMP_IF_FALSE", offset, 1),
+            OpCode::OpLoop => jump_instr(self, "OP_LOOP", offset, -1),
             OpCode::OpReturn => "OP_RETURN".to_string(),
         };
 

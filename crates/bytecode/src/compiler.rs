@@ -191,28 +191,21 @@ impl<'s> Compiler<'s> {
         self.parse_precedence(Precedence::Assignment)
     }
 
-    fn var_declaration(&mut self) -> Result<(), LoxError> {
-        let global = self.parse_variable("Expected variable name.")?;
-
-        if self.parser.match_token(TokenType::Equal)? {
-            self.expression()?;
+    fn statement(&mut self) -> Result<(), LoxError> {
+        if self.parser.match_token(TokenType::Print)? {
+            self.print_statement()
+        } else if self.parser.match_token(TokenType::If)? {
+            self.if_statement()
+        } else if self.parser.match_token(TokenType::While)? {
+            self.while_statement()
+        } else if self.parser.match_token(TokenType::LeftBrance)? {
+            self.begin_scope();
+            self.block()?;
+            self.end_scope();
+            Ok(())
         } else {
-            self.emit_byte(OpCode::OpNil);
+            self.expression_statement()
         }
-        self.parser.consume(
-            TokenType::Semicolon,
-            "Expect ';' after variable declaration.",
-        )?;
-        self.define_variable(global);
-        Ok(())
-    }
-
-    fn expression_statement(&mut self) -> Result<(), LoxError> {
-        self.expression()?;
-        self.parser
-            .consume(TokenType::Semicolon, "Expect ';' after expression.")?;
-        self.emit_byte(OpCode::OpPop);
-        Ok(())
     }
 
     fn if_statement(&mut self) -> Result<(), LoxError> {
@@ -244,6 +237,48 @@ impl<'s> Compiler<'s> {
         self.parser
             .consume(TokenType::Semicolon, "Expect ';' after value.")?;
         self.emit_byte(OpCode::OpPrint);
+        Ok(())
+    }
+
+    fn while_statement(&mut self) -> Result<(), LoxError> {
+        let loop_start = self.compiling_chunk.code.len();
+        self.parser
+            .consume(TokenType::LeftParen, "Expect '(' after 'while'.")?;
+        self.expression()?;
+        self.parser
+            .consume(TokenType::RightParen, "Expect ')' after condition.")?;
+
+        let exit_jump = self.emit_jump(OpCode::OpJumpIfFalse);
+        self.emit_byte(OpCode::OpPop);
+        self.statement()?;
+        self.emit_loop(loop_start);
+
+        self.patch_jump(exit_jump);
+        self.emit_byte(OpCode::OpPop);
+        Ok(())
+    }
+
+    fn var_declaration(&mut self) -> Result<(), LoxError> {
+        let global = self.parse_variable("Expected variable name.")?;
+
+        if self.parser.match_token(TokenType::Equal)? {
+            self.expression()?;
+        } else {
+            self.emit_byte(OpCode::OpNil);
+        }
+        self.parser.consume(
+            TokenType::Semicolon,
+            "Expect ';' after variable declaration.",
+        )?;
+        self.define_variable(global);
+        Ok(())
+    }
+
+    fn expression_statement(&mut self) -> Result<(), LoxError> {
+        self.expression()?;
+        self.parser
+            .consume(TokenType::Semicolon, "Expect ';' after expression.")?;
+        self.emit_byte(OpCode::OpPop);
         Ok(())
     }
 
@@ -281,21 +316,6 @@ impl<'s> Compiler<'s> {
             self.synchronize()?;
         }
         Ok(())
-    }
-
-    fn statement(&mut self) -> Result<(), LoxError> {
-        if self.parser.match_token(TokenType::Print)? {
-            self.print_statement()
-        } else if self.parser.match_token(TokenType::If)? {
-            self.if_statement()
-        } else if self.parser.match_token(TokenType::LeftBrance)? {
-            self.begin_scope();
-            self.block()?;
-            self.end_scope();
-            Ok(())
-        } else {
-            self.expression_statement()
-        }
     }
 
     fn block(&mut self) -> Result<(), LoxError> {
@@ -509,6 +529,18 @@ impl<'s> Compiler<'s> {
 
         self.compiling_chunk.code[offset] = ((jump >> 8) & 0xff) as u8;
         self.compiling_chunk.code[offset + 1] = (jump & 0xff) as u8;
+    }
+
+    fn emit_loop(&mut self, loop_start: usize) {
+        self.emit_byte(OpCode::OpLoop);
+
+        let offset = self.compiling_chunk.code.len() - loop_start + 2;
+        if offset > u16::max_value() as usize {
+            self.error("Loop body too large.");
+        }
+
+        self.emit_byte((offset >> 8) as u8 & 0xff);
+        self.emit_byte(offset as u8 & 0xff);
     }
 
     fn add_local(&mut self, name: Token<'s>) -> Result<(), LoxError> {

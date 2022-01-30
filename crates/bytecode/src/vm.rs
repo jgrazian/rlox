@@ -180,6 +180,10 @@ impl Vm {
                         self.ip += offset as usize;
                     }
                 }
+                OpLoop => {
+                    let offset = read_u16!();
+                    self.ip -= offset as usize;
+                }
                 OpReturn => break,
             }
         }
