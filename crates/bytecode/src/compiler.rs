@@ -571,6 +571,28 @@ impl<'s> Compiler<'s> {
         self.emit_bytes(OpCode::OpDefineGlobal, global);
     }
 
+    fn and_(&mut self, _: bool) -> Result<(), LoxError> {
+        let end_jump = self.emit_jump(OpCode::OpJumpIfFalse);
+
+        self.emit_byte(OpCode::OpPop);
+        self.parse_precedence(Precedence::And)?;
+
+        self.patch_jump(end_jump);
+        Ok(())
+    }
+
+    fn or_(&mut self, _: bool) -> Result<(), LoxError> {
+        let else_jump = self.emit_jump(OpCode::OpJumpIfFalse);
+        let end_jump = self.emit_jump(OpCode::OpJump);
+
+        self.patch_jump(else_jump);
+        self.emit_byte(OpCode::OpPop);
+
+        self.parse_precedence(Precedence::Or)?;
+        self.patch_jump(end_jump);
+        Ok(())
+    }
+
     fn mark_initialized(&mut self) {
         self.locals[self.local_count - 1].depth = self.scope_depth as isize;
     }
@@ -663,6 +685,16 @@ impl<'s> Compiler<'s> {
                 prefix: Some(Self::variable),
                 infix: None,
                 precedence: Precedence::None,
+            },
+            TokenType::And => ParseRule {
+                prefix: None,
+                infix: Some(Self::and_),
+                precedence: Precedence::And,
+            },
+            TokenType::Or => ParseRule {
+                prefix: None,
+                infix: Some(Self::or_),
+                precedence: Precedence::Or,
             },
             _ => ParseRule {
                 prefix: None,
