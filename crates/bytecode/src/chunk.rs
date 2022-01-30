@@ -24,6 +24,8 @@ pub enum OpCode {
     OpNot,
     OpNegate,
     OpPrint,
+    OpJump,
+    OpJumpIfFalse,
     OpReturn,
 }
 
@@ -36,6 +38,7 @@ impl OpCode {
             | Self::OpSetGlobal
             | Self::OpGetLocal
             | Self::OpSetLocal => 2,
+            Self::OpJump | Self::OpJumpIfFalse => 3,
             _ => 1,
         }
     }
@@ -116,6 +119,16 @@ impl Chunk {
             format!("{:<16} {:>4}", name, slot)
         }
 
+        fn jump_instr(chunk: &Chunk, name: &str, offset: usize, sign: isize) -> String {
+            let jump = ((chunk.code[offset + 1] as isize) << 8) | (chunk.code[offset + 2] as isize);
+            format!(
+                "{:<16} {:>4} -> {}",
+                name,
+                offset,
+                offset as isize + 3 + sign * jump
+            )
+        }
+
         let repr = match op {
             OpCode::OpConstant => const_instr(self, "OP_CONST", offset),
             OpCode::OpNil => "OP_NIL".to_string(),
@@ -137,6 +150,8 @@ impl Chunk {
             OpCode::OpNot => "OP_NOT".to_string(),
             OpCode::OpNegate => "OP_NEGATE".to_string(),
             OpCode::OpPrint => "OP_PRINT".to_string(),
+            OpCode::OpJump => jump_instr(self, "OP_JUMP", offset, 1),
+            OpCode::OpJumpIfFalse => jump_instr(self, "OP_JUMP_IF_FALSE", offset, 1),
             OpCode::OpReturn => "OP_RETURN".to_string(),
         };
 

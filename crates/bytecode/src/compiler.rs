@@ -215,6 +215,30 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
+    fn if_statement(&mut self) -> Result<(), LoxError> {
+        self.parser
+            .consume(TokenType::LeftParen, "Expect '(' after 'if'.")?;
+        self.expression()?;
+        self.parser
+            .consume(TokenType::RightParen, "Expect ')' after condition.")?;
+
+        let then_jump = self.emit_jump(OpCode::OpJumpIfFalse);
+        self.emit_byte(OpCode::OpPop);
+        self.statement()?;
+
+        let else_jump = self.emit_jump(OpCode::OpJump);
+
+        self.patch_jump(then_jump);
+        self.emit_byte(OpCode::OpPop);
+
+        if self.parser.match_token(TokenType::Else)? {
+            self.statement()?;
+        }
+        self.patch_jump(else_jump);
+
+        Ok(())
+    }
+
     fn print_statement(&mut self) -> Result<(), LoxError> {
         self.expression()?;
         self.parser
@@ -262,6 +286,8 @@ impl<'s> Compiler<'s> {
     fn statement(&mut self) -> Result<(), LoxError> {
         if self.parser.match_token(TokenType::Print)? {
             self.print_statement()
+        } else if self.parser.match_token(TokenType::If)? {
+            self.if_statement()
         } else if self.parser.match_token(TokenType::LeftBrance)? {
             self.begin_scope();
             self.block()?;
@@ -465,6 +491,24 @@ impl<'s> Compiler<'s> {
 
     fn make_constant(&mut self, value: Value) -> u8 {
         self.compiling_chunk.push_constant(value)
+    }
+
+    fn emit_jump(&mut self, instruction: OpCode) -> usize {
+        self.emit_byte(instruction);
+        self.emit_byte(0xff);
+        self.emit_byte(0xff);
+        self.compiling_chunk.code.len() - 2
+    }
+
+    fn patch_jump(&mut self, offset: usize) {
+        let jump = self.compiling_chunk.code.len() - offset - 2;
+
+        if jump > u16::max_value() as usize {
+            self.error("Too much code to jump over.");
+        }
+
+        self.compiling_chunk.code[offset] = ((jump >> 8) & 0xff) as u8;
+        self.compiling_chunk.code[offset + 1] = (jump & 0xff) as u8;
     }
 
     fn add_local(&mut self, name: Token<'s>) -> Result<(), LoxError> {

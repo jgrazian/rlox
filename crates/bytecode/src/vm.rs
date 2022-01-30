@@ -49,6 +49,13 @@ impl Vm {
             }};
         }
 
+        macro_rules! read_u16 {
+            () => {{
+                self.ip += 2;
+                (self.chunk.code[self.ip - 2] as u16) << 8 | self.chunk.code[self.ip - 1] as u16
+            }};
+        }
+
         macro_rules! binary_op {
             ($value_type: expr, $op: tt) => {
                 {
@@ -162,6 +169,16 @@ impl Vm {
                 },
                 OpPrint => {
                     println!("{}", self.pop());
+                }
+                OpJump => {
+                    let offset = read_u16!();
+                    self.ip += offset as usize;
+                }
+                OpJumpIfFalse => {
+                    let offset = read_u16!();
+                    if self.peek(0).is_falsey() {
+                        self.ip += offset as usize;
+                    }
                 }
                 OpReturn => break,
             }
