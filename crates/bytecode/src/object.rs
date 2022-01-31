@@ -17,9 +17,19 @@ impl fmt::Display for Obj {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Function {
-    arity: usize,
-    chunk: Chunk,
-    name: String,
+    pub arity: usize,
+    pub chunk: Chunk,
+    pub name: String,
+}
+
+impl Function {
+    pub fn new() -> Self {
+        Self {
+            arity: 0,
+            chunk: Chunk::new(),
+            name: String::with_capacity(16),
+        }
+    }
 }

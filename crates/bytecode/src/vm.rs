@@ -1,19 +1,32 @@
 use std::collections::HashMap;
+use std::fmt::Pointer;
 
-use crate::chunk::{
-    Chunk,
-    OpCode::{self, *},
-};
-use crate::compiler::Compiler;
+use crate::compiler::{Compiler, FunctionType, U8_COUNT};
 use crate::error::LoxError;
 use crate::object::Obj;
 use crate::value::Value;
+use crate::{
+    chunk::{
+        Chunk,
+        OpCode::{self, *},
+    },
+    object::Function,
+};
 
-const STACK_MAX: usize = 256;
+const FRAME_MAX: usize = 64;
+const STACK_MAX: usize = FRAME_MAX * U8_COUNT;
+
+#[derive(Debug, Default, Clone, Copy, PartialEq)]
+struct CallFrame {
+    function_slot: usize,
+    ip: usize,
+    slot_base: usize,
+}
 
 pub struct Vm {
-    chunk: Chunk,
-    ip: usize,
+    frames: [CallFrame; FRAME_MAX],
+    frame_count: usize,
+
     stack: [Value; STACK_MAX],
     stack_top: usize,
     globals: HashMap<String, Value>,
@@ -23,8 +36,8 @@ impl Vm {
     pub fn new() -> Self {
         const NIL: Value = Value::Nil;
         Self {
-            chunk: Chunk::new(),
-            ip: 0,
+            frames: [CallFrame::default(); FRAME_MAX],
+            frame_count: 0,
             stack: [NIL; STACK_MAX],
             stack_top: 0,
             globals: HashMap::new(),
@@ -32,27 +45,59 @@ impl Vm {
     }
 
     pub fn interpret(&mut self, source: &str) -> Result<(), LoxError> {
-        self.chunk = Chunk::new();
-        self.ip = 0;
-        self.stack.fill(Value::Nil);
-        self.stack_top = 0;
+        let function = Compiler::new(source, FunctionType::Script).compile()?;
 
-        Compiler::new(source, &mut self.chunk).compile()?;
+        self.push(Value::Obj(Box::new(Obj::Function(function))));
+        self.frames[0] = CallFrame {
+            function_slot: 0,
+            ip: 0,
+            slot_base: 0,
+        };
+        self.frame_count += 1;
+
         self.run()
+    }
+
+    fn frame(&self) -> &CallFrame {
+        &self.frames[self.frame_count - 1]
+    }
+
+    fn frame_mut(&mut self) -> &mut CallFrame {
+        &mut self.frames[self.frame_count - 1]
+    }
+
+    fn frame_function(&self) -> &Function {
+        let slot = self.frame().function_slot;
+        self.stack[slot].as_function()
+    }
+
+    fn frame_slots(&mut self) -> &mut [Value] {
+        let slot_base = self.frame().slot_base;
+        &mut self.stack[slot_base..]
     }
 
     fn run(&mut self) -> Result<(), LoxError> {
         macro_rules! read_byte {
             () => {{
-                self.ip += 1;
-                self.chunk.code[self.ip - 1]
+                self.frame_mut().ip += 1;
+                let i = self.frame().ip - 1;
+                self.frame_function().chunk.code[i]
             }};
         }
 
         macro_rules! read_u16 {
             () => {{
-                self.ip += 2;
-                (self.chunk.code[self.ip - 2] as u16) << 8 | self.chunk.code[self.ip - 1] as u16
+                self.frame_mut().ip += 2;
+                let i = self.frame_mut().ip;
+                (self.frame_function().chunk.code[i - 2] as u16) << 8
+                    | self.frame_function().chunk.code[i - 1] as u16
+            }};
+        }
+
+        macro_rules! read_constant {
+            ($method: ident) => {{
+                let byte = read_byte!() as usize;
+                self.frame_function().chunk.constants[byte].$method()
             }};
         }
 
@@ -75,18 +120,23 @@ impl Vm {
             #[cfg(feature = "debug_trace_execution")]
             {
                 eprint!("          ");
-                self.stack.iter().for_each(|v| eprint!("[ {:>3} ]", v));
+                let end = self
+                    .stack
+                    .iter()
+                    .rposition(|x| x != &Value::Nil)
+                    .unwrap_or(0);
+                self.stack[0..=end]
+                    .iter()
+                    .for_each(|v| eprint!("[ {:>3} ]", v));
                 eprint!("\n");
-                eprintln!(
-                    "{}",
-                    self.chunk
-                        .debug_op(self.ip, &self.chunk.code[self.ip].into())
-                );
+                let ip = self.frame().ip;
+                let op = &self.frame_function().chunk.code[ip].into();
+                eprintln!("{}", self.frame_function().chunk.debug_op(ip, op));
             }
 
             match read_byte!().into() {
                 OpConstant => {
-                    let constant = self.chunk.constants[read_byte!() as usize].clone();
+                    let constant = read_constant!(clone);
                     self.push(constant);
                 }
                 OpNil => self.push(Value::Nil),
@@ -97,14 +147,15 @@ impl Vm {
                 }
                 OpGetLocal => {
                     let slot = read_byte!() as usize;
-                    self.push(self.stack[slot].clone());
+                    let v = self.frame_slots()[slot].clone();
+                    self.push(v);
                 }
                 OpSetLocal => {
                     let slot = read_byte!() as usize;
-                    self.stack[slot] = self.peek(0).clone();
+                    self.frame_slots()[slot] = self.peek(0).clone();
                 }
                 OpGetGlobal => {
-                    let name = self.chunk.constants[read_byte!() as usize].as_string();
+                    let name = read_constant!(as_string);
 
                     match self.globals.get(name) {
                         Some(v) => {
@@ -118,14 +169,14 @@ impl Vm {
                     }
                 }
                 OpDefineGlobal => {
-                    let name = self.chunk.constants[read_byte!() as usize].as_string();
-                    self.globals.insert(name.into(), self.peek(0).clone());
+                    let name = read_constant!(as_string).to_string();
+                    self.globals.insert(name, self.peek(0).clone());
                     self.pop();
                 }
                 OpSetGlobal => {
-                    let name = self.chunk.constants[read_byte!() as usize].as_string();
+                    let name = read_constant!(as_string).to_string();
                     let _v = self.peek(0).clone();
-                    match self.globals.get_mut(name) {
+                    match self.globals.get_mut(&name) {
                         Some(v) => *v = _v,
                         None => {
                             let msg = format!("Undefined variable '{}'.", name);
@@ -172,26 +223,28 @@ impl Vm {
                 }
                 OpJump => {
                     let offset = read_u16!();
-                    self.ip += offset as usize;
+                    self.frame_mut().ip += offset as usize;
                 }
                 OpJumpIfFalse => {
                     let offset = read_u16!();
                     if self.peek(0).is_falsey() {
-                        self.ip += offset as usize;
+                        self.frame_mut().ip += offset as usize;
                     }
                 }
                 OpLoop => {
                     let offset = read_u16!();
-                    self.ip -= offset as usize;
+                    self.frame_mut().ip -= offset as usize;
                 }
                 OpReturn => break,
             }
         }
+        self.reset_stack();
         Ok(())
     }
 
     fn reset_stack(&mut self) {
         self.stack_top = 0;
+        self.frame_count = 0;
     }
 
     fn push(&mut self, value: Value) {
@@ -217,7 +270,8 @@ impl Vm {
     }
 
     fn runtime_error<T: Into<String>>(&mut self, message: T) -> Result<(), LoxError> {
-        let line = self.chunk.lines[self.ip - 1];
+        let instr = self.frame().ip - 1;
+        let line = self.frame_function().chunk.lines[instr];
         self.reset_stack();
         Err(LoxError::RuntimeError(format!(
             "{}\n[line {}] in script",

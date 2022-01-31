@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::object::Obj;
+use crate::object::{Function, Obj};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Value {
@@ -37,6 +37,16 @@ impl Value {
             Self::Obj(o) => match &**o {
                 Obj::String(s) => s,
                 _ => panic!("Obj is not a string"),
+            },
+            _ => panic!("Value is not a obj"),
+        }
+    }
+
+    pub fn as_function(&self) -> &Function {
+        match self {
+            Self::Obj(o) => match &**o {
+                Obj::Function(f) => f,
+                _ => panic!("Obj is not a function"),
             },
             _ => panic!("Value is not a obj"),
         }

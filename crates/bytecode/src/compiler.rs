@@ -1,6 +1,6 @@
 use crate::chunk::{Chunk, OpCode};
 use crate::error::LoxError;
-use crate::object::Obj;
+use crate::object::{Function, Obj};
 use crate::scanner::{Scanner, Token, TokenType};
 use crate::value::Value;
 
@@ -149,17 +149,25 @@ struct Local<'s> {
     depth: isize,
 }
 
+pub enum FunctionType {
+    Function,
+    Script,
+}
+
+pub const U8_COUNT: usize = 256;
+
 pub struct Compiler<'s> {
     parser: Parser<'s>,
-    compiling_chunk: &'s mut Chunk,
+    function: Function,
+    ty: FunctionType,
 
-    locals: [Local<'s>; 256],
+    locals: [Local<'s>; U8_COUNT],
     local_count: usize,
     scope_depth: usize,
 }
 
 impl<'s> Compiler<'s> {
-    pub fn new(source: &'s str, compiling_chunk: &'s mut Chunk) -> Self {
+    pub fn new(source: &'s str, ty: FunctionType) -> Self {
         const LOCAL: Local = Local {
             name: Token {
                 ty: TokenType::Eof,
@@ -171,20 +179,24 @@ impl<'s> Compiler<'s> {
 
         Self {
             parser: Parser::new(source),
-            compiling_chunk,
-            locals: [LOCAL; 256],
-            local_count: 0,
+            function: Function::new(),
+            ty,
+            locals: [LOCAL; U8_COUNT],
+            local_count: 1,
             scope_depth: 0,
         }
     }
 
-    pub fn compile(&mut self) -> Result<(), LoxError> {
+    pub fn compile(&mut self) -> Result<Function, LoxError> {
         self.parser.advance()?;
         while !self.parser.match_token(TokenType::Eof)? {
             self.declaration()?;
         }
-        self.end_compiler();
-        Ok(())
+        Ok(self.end_compiler())
+    }
+
+    fn current_chunk(&mut self) -> &mut Chunk {
+        &mut self.function.chunk
     }
 
     fn declaration(&mut self) -> Result<(), LoxError> {
@@ -272,7 +284,7 @@ impl<'s> Compiler<'s> {
     }
 
     fn while_statement(&mut self) -> Result<(), LoxError> {
-        let loop_start = self.compiling_chunk.code.len();
+        let loop_start = self.current_chunk().code.len();
         self.parser
             .consume(TokenType::LeftParen, "Expect '(' after 'while'.")?;
         self.expression()?;
@@ -302,7 +314,7 @@ impl<'s> Compiler<'s> {
             self.expression_statement()?;
         }
 
-        let mut loop_start = self.compiling_chunk.code.len();
+        let mut loop_start = self.current_chunk().code.len();
         let mut exit_jump = None;
         if !self.parser.match_token(TokenType::Semicolon)? {
             self.expression()?;
@@ -315,7 +327,7 @@ impl<'s> Compiler<'s> {
 
         if !self.parser.match_token(TokenType::RightParen)? {
             let body_jump = self.emit_jump(OpCode::OpJump);
-            let increment_start = self.compiling_chunk.code.len();
+            let increment_start = self.current_chunk().code.len();
             self.expression()?;
             self.emit_byte(OpCode::OpPop);
             self.parser
@@ -507,14 +519,20 @@ impl<'s> Compiler<'s> {
         }
     }
 
-    fn end_compiler(&mut self) {
+    fn end_compiler(&mut self) -> Function {
         self.emit_return();
         #[cfg(feature = "debug_print_code")]
         {
             if !self.parser.had_error {
-                self.compiling_chunk.disassemble("code");
+                let name = if self.function.name.is_empty() {
+                    "script".to_string()
+                } else {
+                    self.function.name.clone()
+                };
+                self.current_chunk().disassemble(&name);
             }
         }
+        std::mem::take(&mut self.function)
     }
 
     fn emit_return(&mut self) {
@@ -522,8 +540,8 @@ impl<'s> Compiler<'s> {
     }
 
     fn emit_byte<T: Into<u8>>(&mut self, byte: T) {
-        self.compiling_chunk
-            .push_byte(byte, self.parser.previous.line);
+        let previous_line = self.parser.previous.line;
+        self.current_chunk().push_byte(byte, previous_line);
     }
 
     fn emit_bytes<U: Into<u8>, V: Into<u8>>(&mut self, byte1: U, byte2: V) {
@@ -538,31 +556,31 @@ impl<'s> Compiler<'s> {
     }
 
     fn make_constant(&mut self, value: Value) -> u8 {
-        self.compiling_chunk.push_constant(value)
+        self.current_chunk().push_constant(value)
     }
 
     fn emit_jump(&mut self, instruction: OpCode) -> usize {
         self.emit_byte(instruction);
         self.emit_byte(0xff);
         self.emit_byte(0xff);
-        self.compiling_chunk.code.len() - 2
+        self.current_chunk().code.len() - 2
     }
 
     fn patch_jump(&mut self, offset: usize) {
-        let jump = self.compiling_chunk.code.len() - offset - 2;
+        let jump = self.current_chunk().code.len() - offset - 2;
 
         if jump > u16::max_value() as usize {
             self.error("Too much code to jump over.");
         }
 
-        self.compiling_chunk.code[offset] = ((jump >> 8) & 0xff) as u8;
-        self.compiling_chunk.code[offset + 1] = (jump & 0xff) as u8;
+        self.current_chunk().code[offset] = ((jump >> 8) & 0xff) as u8;
+        self.current_chunk().code[offset + 1] = (jump & 0xff) as u8;
     }
 
     fn emit_loop(&mut self, loop_start: usize) {
         self.emit_byte(OpCode::OpLoop);
 
-        let offset = self.compiling_chunk.code.len() - loop_start + 2;
+        let offset = self.current_chunk().code.len() - loop_start + 2;
         if offset > u16::max_value() as usize {
             self.error("Loop body too large.");
         }
@@ -572,7 +590,7 @@ impl<'s> Compiler<'s> {
     }
 
     fn add_local(&mut self, name: Token<'s>) -> Result<(), LoxError> {
-        if self.local_count == 256 {
+        if self.local_count == U8_COUNT {
             match self.error("Too many local variables in function.") {
                 Some(e) => return Err(e),
                 None => {}
