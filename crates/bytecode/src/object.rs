@@ -12,7 +12,13 @@ impl fmt::Display for Obj {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
             Self::String(s) => fmt::Display::fmt(s, f),
-            Self::Function(fun) => fmt::Display::fmt(&format!("<fn {}>", fun.name), f),
+            Self::Function(fun) => fmt::Display::fmt(
+                &match fun.name.len() {
+                    0 => "<script>".to_string(),
+                    _ => format!("<fn {}>", fun.name),
+                },
+                f,
+            ),
         }
     }
 }
@@ -30,6 +36,14 @@ impl Function {
             arity: 0,
             chunk: Chunk::new(),
             name: String::with_capacity(16),
+        }
+    }
+
+    pub fn named(name: &str) -> Self {
+        Self {
+            arity: 0,
+            chunk: Chunk::new(),
+            name: name.to_string(),
         }
     }
 }

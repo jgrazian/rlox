@@ -1,7 +1,7 @@
 use core::iter::Peekable;
 use core::str::CharIndices;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Scanner<'s> {
     source: &'s str,
     iter: Peekable<CharIndices<'s>>,

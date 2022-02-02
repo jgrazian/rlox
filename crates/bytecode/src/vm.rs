@@ -1,7 +1,6 @@
 use std::collections::HashMap;
-use std::fmt::Pointer;
 
-use crate::compiler::{Compiler, FunctionType, U8_COUNT};
+use crate::compiler::{compile, Compiler, FunctionType, U8_COUNT};
 use crate::error::LoxError;
 use crate::object::Obj;
 use crate::value::Value;
@@ -45,7 +44,7 @@ impl Vm {
     }
 
     pub fn interpret(&mut self, source: &str) -> Result<(), LoxError> {
-        let function = Compiler::new(source, FunctionType::Script).compile()?;
+        let function = compile(source)?;
 
         self.push(Value::Obj(Box::new(Obj::Function(function))));
         self.frames[0] = CallFrame {
