@@ -1,16 +1,10 @@
 use std::collections::HashMap;
 
-use crate::compiler::{compile, Compiler, FunctionType, U8_COUNT};
+use crate::chunk::OpCode::*;
+use crate::compiler::{compile, U8_COUNT};
 use crate::error::LoxError;
 use crate::object::Obj;
 use crate::value::Value;
-use crate::{
-    chunk::{
-        Chunk,
-        OpCode::{self, *},
-    },
-    object::Function,
-};
 
 const FRAME_MAX: usize = 64;
 const STACK_MAX: usize = FRAME_MAX * U8_COUNT;
@@ -57,46 +51,44 @@ impl Vm {
         self.run()
     }
 
-    fn frame(&self) -> &CallFrame {
-        &self.frames[self.frame_count - 1]
-    }
-
-    fn frame_mut(&mut self) -> &mut CallFrame {
-        &mut self.frames[self.frame_count - 1]
-    }
-
-    fn frame_function(&self) -> &Function {
-        let slot = self.frame().function_slot;
-        self.stack[slot].as_function()
-    }
-
-    fn frame_slots(&mut self) -> &mut [Value] {
-        let slot_base = self.frame().slot_base;
-        &mut self.stack[slot_base..]
-    }
-
     fn run(&mut self) -> Result<(), LoxError> {
+        macro_rules! frame {
+            () => {
+                self.frames[self.frame_count - 1]
+            };
+        }
+
+        macro_rules! value {
+            ($slot: expr) => {
+                self.stack[frame!().slot_base..][$slot]
+            };
+        }
+
         macro_rules! read_byte {
             () => {{
-                self.frame_mut().ip += 1;
-                let i = self.frame().ip - 1;
-                self.frame_function().chunk.code[i]
+                frame!().ip += 1;
+                let i = frame!().ip - 1;
+                self.stack[frame!().function_slot].as_function().chunk.code[i]
             }};
         }
 
         macro_rules! read_u16 {
             () => {{
-                self.frame_mut().ip += 2;
-                let i = self.frame_mut().ip;
-                (self.frame_function().chunk.code[i - 2] as u16) << 8
-                    | self.frame_function().chunk.code[i - 1] as u16
+                frame!().ip += 2;
+                let i = frame!().ip;
+                (self.stack[frame!().function_slot].as_function().chunk.code[i - 2] as u16) << 8
+                    | self.stack[frame!().function_slot].as_function().chunk.code[i - 1] as u16
             }};
         }
 
         macro_rules! read_constant {
             ($method: ident) => {{
                 let byte = read_byte!() as usize;
-                self.frame_function().chunk.constants[byte].$method()
+                self.stack[frame!().function_slot]
+                    .as_function()
+                    .chunk
+                    .constants[byte]
+                    .$method()
             }};
         }
 
@@ -146,12 +138,12 @@ impl Vm {
                 }
                 OpGetLocal => {
                     let slot = read_byte!() as usize;
-                    let v = self.frame_slots()[slot].clone();
+                    let v = value!(slot).clone();
                     self.push(v);
                 }
                 OpSetLocal => {
                     let slot = read_byte!() as usize;
-                    self.frame_slots()[slot] = self.peek(0).clone();
+                    value!(slot) = self.peek(0).clone();
                 }
                 OpGetGlobal => {
                     let name = read_constant!(as_string);
@@ -222,17 +214,17 @@ impl Vm {
                 }
                 OpJump => {
                     let offset = read_u16!();
-                    self.frame_mut().ip += offset as usize;
+                    frame!().ip += offset as usize;
                 }
                 OpJumpIfFalse => {
                     let offset = read_u16!();
                     if self.peek(0).is_falsey() {
-                        self.frame_mut().ip += offset as usize;
+                        frame!().ip += offset as usize;
                     }
                 }
                 OpLoop => {
                     let offset = read_u16!();
-                    self.frame_mut().ip -= offset as usize;
+                    frame!().ip -= offset as usize;
                 }
                 OpReturn => break,
             }
@@ -269,8 +261,11 @@ impl Vm {
     }
 
     fn runtime_error<T: Into<String>>(&mut self, message: T) -> Result<(), LoxError> {
-        let instr = self.frame().ip - 1;
-        let line = self.frame_function().chunk.lines[instr];
+        let instr = self.frames[self.frame_count - 1].ip - 1;
+        let line = self.stack[self.frames[self.frame_count - 1].function_slot]
+            .as_function()
+            .chunk
+            .lines[instr];
         self.reset_stack();
         Err(LoxError::RuntimeError(format!(
             "{}\n[line {}] in script",

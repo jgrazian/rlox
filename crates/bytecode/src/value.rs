@@ -11,24 +11,10 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn as_bool(&self) -> bool {
-        match self {
-            Self::Bool(b) => *b,
-            _ => panic!("Value is not a bool"),
-        }
-    }
-
     pub fn as_number(&self) -> f64 {
         match self {
             Self::Number(v) => *v,
             _ => panic!("Value is not a number"),
-        }
-    }
-
-    pub fn as_obj(self) -> Box<Obj> {
-        match self {
-            Self::Obj(v) => v,
-            _ => panic!("Value is not a obj"),
         }
     }
 
@@ -63,16 +49,6 @@ impl Value {
         match self {
             Self::Obj(o) => match **o {
                 Obj::String(_) => true,
-                _ => false,
-            },
-            _ => false,
-        }
-    }
-
-    pub fn is_function(&self) -> bool {
-        match self {
-            Self::Obj(o) => match **o {
-                Obj::Function(_) => true,
                 _ => false,
             },
             _ => false,

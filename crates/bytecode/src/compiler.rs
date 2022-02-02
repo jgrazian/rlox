@@ -1,5 +1,3 @@
-use core::cell::{RefCell, RefMut};
-
 use crate::chunk::{Chunk, OpCode};
 use crate::error::LoxError;
 use crate::object::{Function, Obj};
@@ -141,14 +139,14 @@ impl Precedence {
 }
 
 pub fn compile(source: &str) -> Result<Function, LoxError> {
-    let parser = Parser::new(source);
-    let function = Compiler::new(Some(parser), FunctionType::Script).compile()?;
+    let mut parser = Parser::new(source);
+    let function = Compiler::new(&mut parser, FunctionType::Script).compile()?;
     Ok(function)
 }
 
-struct ParseRule<'s> {
-    prefix: Option<fn(&mut Compiler<'s>, bool) -> Result<(), LoxError>>,
-    infix: Option<fn(&mut Compiler<'s>, bool) -> Result<(), LoxError>>,
+struct ParseRule<'s, 't> {
+    prefix: Option<fn(&mut Compiler<'s, 't>, bool) -> Result<(), LoxError>>,
+    infix: Option<fn(&mut Compiler<'s, 't>, bool) -> Result<(), LoxError>>,
     precedence: Precedence,
 }
 
@@ -166,8 +164,8 @@ pub enum FunctionType {
 
 pub const U8_COUNT: usize = 256;
 
-pub struct Compiler<'s> {
-    parser: Option<Parser<'s>>,
+pub struct Compiler<'s, 't> {
+    parser: &'t mut Parser<'s>,
     function: Function,
     ty: FunctionType,
 
@@ -176,8 +174,8 @@ pub struct Compiler<'s> {
     scope_depth: usize,
 }
 
-impl<'s> Compiler<'s> {
-    pub fn new(parser: Option<Parser<'s>>, ty: FunctionType) -> Self {
+impl<'s, 't> Compiler<'s, 't> {
+    pub fn new(parser: &'t mut Parser<'s>, ty: FunctionType) -> Self {
         const LOCAL: Local = Local {
             name: Token {
                 ty: TokenType::Eof,
@@ -188,7 +186,7 @@ impl<'s> Compiler<'s> {
         };
 
         let function = if ty != FunctionType::Script {
-            Function::named(parser.as_ref().unwrap().previous.lexeme)
+            Function::named(parser.previous.lexeme)
         } else {
             Function::new()
         };
@@ -198,13 +196,13 @@ impl<'s> Compiler<'s> {
             function,
             ty,
             locals: [LOCAL; U8_COUNT],
-            local_count: 1,
+            local_count: 1, // Function is always the 0th local
             scope_depth: 0,
         }
     }
 
     fn parser(&mut self) -> &mut Parser<'s> {
-        self.parser.as_mut().unwrap()
+        self.parser
     }
 
     pub fn compile(&mut self) -> Result<Function, LoxError> {
@@ -489,7 +487,7 @@ impl<'s> Compiler<'s> {
     }
 
     fn function(&mut self, ty: FunctionType) -> Result<(), LoxError> {
-        let mut compiler = Compiler::new(std::mem::take(&mut self.parser), ty);
+        let mut compiler = Compiler::new(self.parser, ty);
         compiler.begin_scope();
 
         compiler
@@ -521,7 +519,6 @@ impl<'s> Compiler<'s> {
         compiler.block()?;
 
         let function = compiler.end_compiler();
-        self.parser = std::mem::take(&mut compiler.parser);
 
         let constant = self.make_constant(Value::Obj(Box::new(Obj::Function(function))));
         self.emit_bytes(OpCode::OpConstant, constant);
@@ -828,7 +825,7 @@ impl<'s> Compiler<'s> {
         })
     }
 
-    fn get_rule(ty: TokenType) -> ParseRule<'s> {
+    fn get_rule(ty: TokenType) -> ParseRule<'s, 't> {
         match ty {
             TokenType::LeftParen => ParseRule {
                 prefix: Some(Self::grouping),

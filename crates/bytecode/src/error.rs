@@ -3,7 +3,6 @@ use std::fmt::Display;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum LoxError {
-    Errors(Vec<LoxError>),
     UnknownError,
     RuntimeError(String),
     CompileError {
@@ -22,9 +21,6 @@ impl Error for LoxError {}
 impl Display for LoxError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            LoxError::Errors(errors) => Ok(for error in errors {
-                writeln!(f, "{}", error)?;
-            }),
             LoxError::UnknownError => write!(f, "Unknown error"),
             LoxError::RuntimeError(s) => write!(f, "{}", s),
             LoxError::CompileError {
@@ -46,18 +42,6 @@ impl From<Option<LoxError>> for LoxError {
         match error {
             Some(error) => error,
             None => LoxError::UnknownError,
-        }
-    }
-}
-
-impl LoxError {
-    pub fn push(self, other: LoxError) -> LoxError {
-        match self {
-            LoxError::Errors(mut errors) => {
-                errors.push(other);
-                LoxError::Errors(errors)
-            }
-            _ => LoxError::Errors(vec![self, other]),
         }
     }
 }
