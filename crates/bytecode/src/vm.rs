@@ -1,19 +1,30 @@
+use core::ptr;
 use std::collections::HashMap;
 
 use crate::chunk::OpCode::*;
 use crate::compiler::{compile, U8_COUNT};
 use crate::error::LoxError;
-use crate::object::Obj;
+use crate::object::{Function, Obj};
 use crate::value::Value;
 
 const FRAME_MAX: usize = 64;
 const STACK_MAX: usize = FRAME_MAX * U8_COUNT;
 
-#[derive(Debug, Default, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 struct CallFrame {
-    function_slot: usize,
+    function: *const Function,
     ip: usize,
     slot_base: usize,
+}
+
+impl Default for CallFrame {
+    fn default() -> Self {
+        Self {
+            function: ptr::null(),
+            ip: usize::default(),
+            slot_base: usize::default(),
+        }
+    }
 }
 
 pub struct Vm {
@@ -40,9 +51,9 @@ impl Vm {
     pub fn interpret(&mut self, source: &str) -> Result<(), LoxError> {
         let function = compile(source)?;
 
-        self.push(Value::Obj(Box::new(Obj::Function(function))));
+        self.push(Value::new_obj(Obj::Function(function)));
         self.frames[0] = CallFrame {
-            function_slot: 0,
+            function: self.stack[0].as_function(),
             ip: 0,
             slot_base: 0,
         };
@@ -52,43 +63,39 @@ impl Vm {
     }
 
     fn run(&mut self) -> Result<(), LoxError> {
-        macro_rules! frame {
-            () => {
-                self.frames[self.frame_count - 1]
-            };
-        }
+        let frame: *mut CallFrame = &mut self.frames[self.frame_count - 1];
 
         macro_rules! value {
             ($slot: expr) => {
-                self.stack[frame!().slot_base..][$slot]
+                self.stack[unsafe { (*frame).slot_base }..][$slot]
             };
         }
 
         macro_rules! read_byte {
-            () => {{
-                frame!().ip += 1;
-                let i = frame!().ip - 1;
-                self.stack[frame!().function_slot].as_function().chunk.code[i]
-            }};
+            () => {
+                unsafe {
+                    (*frame).ip += 1;
+                    let i = (*frame).ip - 1;
+                    (*(*frame).function).chunk.code[i]
+                }
+            };
         }
 
         macro_rules! read_u16 {
-            () => {{
-                frame!().ip += 2;
-                let i = frame!().ip;
-                (self.stack[frame!().function_slot].as_function().chunk.code[i - 2] as u16) << 8
-                    | self.stack[frame!().function_slot].as_function().chunk.code[i - 1] as u16
-            }};
+            () => {
+                unsafe {
+                    (*frame).ip += 2;
+                    let i = (*frame).ip;
+                    ((*(*frame).function).chunk.code[i - 2] as u16) << 8
+                        | (*(*frame).function).chunk.code[i - 1] as u16
+                }
+            };
         }
 
         macro_rules! read_constant {
-            ($method: ident) => {{
+            () => {{
                 let byte = read_byte!() as usize;
-                self.stack[frame!().function_slot]
-                    .as_function()
-                    .chunk
-                    .constants[byte]
-                    .$method()
+                unsafe { (*(*frame).function).chunk.constants[byte] }
             }};
         }
 
@@ -127,7 +134,7 @@ impl Vm {
 
             match read_byte!().into() {
                 OpConstant => {
-                    let constant = read_constant!(clone);
+                    let constant = read_constant!();
                     self.push(constant);
                 }
                 OpNil => self.push(Value::Nil),
@@ -138,35 +145,35 @@ impl Vm {
                 }
                 OpGetLocal => {
                     let slot = read_byte!() as usize;
-                    let v = value!(slot).clone();
+                    let v = value!(slot);
                     self.push(v);
                 }
                 OpSetLocal => {
                     let slot = read_byte!() as usize;
-                    value!(slot) = self.peek(0).clone();
+                    value!(slot) = *self.peek(0);
                 }
                 OpGetGlobal => {
-                    let name = read_constant!(as_string);
+                    let constant = read_constant!();
+                    let name = constant.as_string();
 
-                    match self.globals.get(name) {
-                        Some(v) => {
-                            let v = v.clone();
-                            self.push(v)
-                        }
+                    let v = match self.globals.get(name) {
+                        Some(v) => *v,
                         None => {
                             let msg = format!("Undefined variable '{}'.", name);
                             return self.runtime_error(msg);
                         }
-                    }
+                    };
+
+                    self.push(v)
                 }
                 OpDefineGlobal => {
-                    let name = read_constant!(as_string).to_string();
-                    self.globals.insert(name, self.peek(0).clone());
+                    let name = read_constant!().as_string().to_string();
+                    self.globals.insert(name, *self.peek(0));
                     self.pop();
                 }
                 OpSetGlobal => {
-                    let name = read_constant!(as_string).to_string();
-                    let _v = self.peek(0).clone();
+                    let name = read_constant!().as_string().to_string();
+                    let _v = *self.peek(0);
                     match self.globals.get_mut(&name) {
                         Some(v) => *v = _v,
                         None => {
@@ -186,7 +193,7 @@ impl Vm {
                     (b, a) if b.is_string() && a.is_string() => {
                         let (s1, s2) = self.pop2();
                         let s = s1.as_string().to_owned() + s2.as_string();
-                        self.push(Value::Obj(Box::new(Obj::String(s))))
+                        self.push(Value::new_obj(Obj::String(s)))
                     }
                     (Value::Number(b), Value::Number(a)) => {
                         let v = a + b;
@@ -214,17 +221,23 @@ impl Vm {
                 }
                 OpJump => {
                     let offset = read_u16!();
-                    frame!().ip += offset as usize;
+                    unsafe {
+                        (*frame).ip += offset as usize;
+                    }
                 }
                 OpJumpIfFalse => {
                     let offset = read_u16!();
                     if self.peek(0).is_falsey() {
-                        frame!().ip += offset as usize;
+                        unsafe {
+                            (*frame).ip += offset as usize;
+                        }
                     }
                 }
                 OpLoop => {
                     let offset = read_u16!();
-                    frame!().ip -= offset as usize;
+                    unsafe {
+                        (*frame).ip -= offset as usize;
+                    }
                 }
                 OpReturn => break,
             }
@@ -262,10 +275,7 @@ impl Vm {
 
     fn runtime_error<T: Into<String>>(&mut self, message: T) -> Result<(), LoxError> {
         let instr = self.frames[self.frame_count - 1].ip - 1;
-        let line = self.stack[self.frames[self.frame_count - 1].function_slot]
-            .as_function()
-            .chunk
-            .lines[instr];
+        let line = unsafe { (*self.frames[self.frame_count - 1].function).chunk.lines[instr] };
         self.reset_stack();
         Err(LoxError::RuntimeError(format!(
             "{}\n[line {}] in script",

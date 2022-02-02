@@ -410,7 +410,7 @@ impl<'s, 't> Compiler<'s, 't> {
         let mut chars = self.parser().previous.lexeme.chars();
         chars.next();
         chars.next_back();
-        self.emit_constant(Value::Obj(Box::new(Obj::String(chars.collect()))))
+        self.emit_constant(Value::new_obj(Obj::String(chars.collect())))
     }
 
     fn variable(&mut self, can_assign: bool) -> Result<(), LoxError> {
@@ -520,7 +520,7 @@ impl<'s, 't> Compiler<'s, 't> {
 
         let function = compiler.end_compiler();
 
-        let constant = self.make_constant(Value::Obj(Box::new(Obj::Function(function))));
+        let constant = self.make_constant(Value::new_obj(Obj::Function(function)));
         self.emit_bytes(OpCode::OpConstant, constant);
         Ok(())
     }
@@ -594,7 +594,7 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn identifier_constant(&mut self, name: Token) -> u8 {
-        self.make_constant(Value::Obj(Box::new(Obj::String(name.lexeme.to_string()))))
+        self.make_constant(Value::new_obj(Obj::String(name.lexeme.to_string())))
     }
 
     fn begin_scope(&mut self) {
