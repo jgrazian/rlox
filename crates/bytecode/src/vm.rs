@@ -57,13 +57,13 @@ impl Vm {
             ip: 0,
             slot_base: 0,
         };
-        self.frame_count += 1;
 
+        self.call(self.stack[0].as_function(), 0)?;
         self.run()
     }
 
     fn run(&mut self) -> Result<(), LoxError> {
-        let frame: *mut CallFrame = &mut self.frames[self.frame_count - 1];
+        let mut frame: *mut CallFrame = &mut self.frames[self.frame_count - 1];
 
         macro_rules! value {
             ($slot: expr) => {
@@ -116,7 +116,7 @@ impl Vm {
 
         loop {
             #[cfg(feature = "debug_trace_execution")]
-            {
+            unsafe {
                 eprint!("          ");
                 let end = self
                     .stack
@@ -127,9 +127,9 @@ impl Vm {
                     .iter()
                     .for_each(|v| eprint!("[ {:>3} ]", v));
                 eprint!("\n");
-                let ip = self.frame().ip;
-                let op = &self.frame_function().chunk.code[ip].into();
-                eprintln!("{}", self.frame_function().chunk.debug_op(ip, op));
+                let ip = (*frame).ip;
+                let op = (*(*frame).function).chunk.code[ip].into();
+                eprintln!("{}", (*(*frame).function).chunk.debug_op(ip, &op));
             }
 
             match read_byte!().into() {
@@ -239,11 +239,25 @@ impl Vm {
                         (*frame).ip -= offset as usize;
                     }
                 }
-                OpReturn => break,
+                OpCall => {
+                    let arg_count = read_byte!() as usize;
+                    self.call_value(*self.peek(arg_count), arg_count)?;
+                    frame = &mut self.frames[self.frame_count - 1];
+                }
+                OpReturn => {
+                    let result = *self.pop();
+                    self.frame_count -= 1;
+                    if self.frame_count == 0 {
+                        self.reset_stack();
+                        return Ok(());
+                    }
+
+                    self.stack_top = unsafe { (*frame).slot_base };
+                    self.push(result);
+                    frame = &mut self.frames[self.frame_count - 1];
+                }
             }
         }
-        self.reset_stack();
-        Ok(())
     }
 
     fn reset_stack(&mut self) {
@@ -273,14 +287,60 @@ impl Vm {
         &self.stack[self.stack_top - 1 - distance]
     }
 
+    fn call_value(&mut self, callee: Value, arg_count: usize) -> Result<(), LoxError> {
+        match callee {
+            Value::Obj(o) => match unsafe { &*o } {
+                Obj::Function(ref f) => self.call(f, arg_count),
+                _ => self.runtime_error("Can only call functions and classes."),
+            },
+            _ => self.runtime_error("Can only call functions and classes."),
+        }
+    }
+
+    fn call(&mut self, function: *const Function, arg_count: usize) -> Result<(), LoxError> {
+        if arg_count != unsafe { (*function).arity } {
+            let msg = format!(
+                "Expected {} arguments but got {}.",
+                unsafe { (*function).arity },
+                arg_count
+            );
+            return self.runtime_error(msg);
+        }
+
+        if self.frame_count == FRAME_MAX {
+            return self.runtime_error("Stack overflow.");
+        }
+
+        let frame = &mut self.frames[self.frame_count];
+        self.frame_count += 1;
+
+        frame.function = function;
+        frame.ip = 0;
+        frame.slot_base = self.stack_top - arg_count - 1;
+
+        Ok(())
+    }
+
     fn runtime_error<T: Into<String>>(&mut self, message: T) -> Result<(), LoxError> {
-        let instr = self.frames[self.frame_count - 1].ip - 1;
-        let line = unsafe { (*self.frames[self.frame_count - 1].function).chunk.lines[instr] };
+        let mut msg = String::new();
+        for i in (0..=self.frame_count - 1).rev() {
+            let frame = &self.frames[i];
+            let function = unsafe { &*frame.function };
+            let line = function.chunk.lines[frame.ip - 1];
+
+            if function.name == "" {
+                msg.push_str(&format!("[line {}] in script\n", line));
+            } else {
+                msg.push_str(&format!("[line {}] in {}()\n", line, function.name));
+            }
+        }
+
         self.reset_stack();
+
         Err(LoxError::RuntimeError(format!(
-            "{}\n[line {}] in script",
+            "{}\n{}",
             message.into(),
-            line
+            msg
         )))
     }
 }

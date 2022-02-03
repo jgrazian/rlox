@@ -27,6 +27,7 @@ pub enum OpCode {
     OpJump,
     OpJumpIfFalse,
     OpLoop,
+    OpCall,
     OpReturn,
 }
 
@@ -154,6 +155,7 @@ impl Chunk {
             OpCode::OpJump => jump_instr(self, "OP_JUMP", offset, 1),
             OpCode::OpJumpIfFalse => jump_instr(self, "OP_JUMP_IF_FALSE", offset, 1),
             OpCode::OpLoop => jump_instr(self, "OP_LOOP", offset, -1),
+            OpCode::OpCall => byte_instr(self, "OP_CALL", offset),
             OpCode::OpReturn => "OP_RETURN".to_string(),
         };
 

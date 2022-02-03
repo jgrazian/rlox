@@ -267,6 +267,8 @@ impl<'s, 't> Compiler<'s, 't> {
             self.for_statement()
         } else if self.parser().match_token(TokenType::If)? {
             self.if_statement()
+        } else if self.parser().match_token(TokenType::Return)? {
+            self.return_statement()
         } else if self.parser().match_token(TokenType::While)? {
             self.while_statement()
         } else if self.parser().match_token(TokenType::LeftBrance)? {
@@ -383,6 +385,25 @@ impl<'s, 't> Compiler<'s, 't> {
         self.parser()
             .consume(TokenType::Semicolon, "Expect ';' after expression.")?;
         self.emit_byte(OpCode::OpPop);
+        Ok(())
+    }
+
+    fn return_statement(&mut self) -> Result<(), LoxError> {
+        if self.ty == FunctionType::Script {
+            match self.error("Cannot return from top-level code.") {
+                Some(e) => return Err(e),
+                None => {}
+            }
+        }
+
+        if self.parser().match_token(TokenType::Semicolon)? {
+            self.emit_return();
+        } else {
+            self.expression()?;
+            self.parser()
+                .consume(TokenType::Semicolon, "Expect ';' after return value.")?;
+            self.emit_byte(OpCode::OpReturn);
+        }
         Ok(())
     }
 
@@ -525,6 +546,12 @@ impl<'s, 't> Compiler<'s, 't> {
         Ok(())
     }
 
+    fn call(&mut self, _: bool) -> Result<(), LoxError> {
+        let arg_count = self.argument_list()?;
+        self.emit_bytes(OpCode::OpCall, arg_count as u8);
+        Ok(())
+    }
+
     fn argument_list(&mut self) -> Result<u8, LoxError> {
         let mut arg_count = 0;
         if !self.parser().check_token(TokenType::RightParen) {
@@ -629,6 +656,7 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn emit_return(&mut self) {
+        self.emit_byte(OpCode::OpNil);
         self.emit_byte(OpCode::OpReturn);
     }
 
@@ -829,8 +857,8 @@ impl<'s, 't> Compiler<'s, 't> {
         match ty {
             TokenType::LeftParen => ParseRule {
                 prefix: Some(Self::grouping),
-                infix: None,
-                precedence: Precedence::None,
+                infix: Some(Self::call),
+                precedence: Precedence::Call,
             },
             TokenType::Minus => ParseRule {
                 prefix: Some(Self::unary),
