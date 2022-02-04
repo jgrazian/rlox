@@ -39,7 +39,8 @@ impl OpCode {
             | Self::OpDefineGlobal
             | Self::OpSetGlobal
             | Self::OpGetLocal
-            | Self::OpSetLocal => 2,
+            | Self::OpSetLocal
+            | Self::OpCall => 2,
             Self::OpJump | Self::OpJumpIfFalse | Self::OpLoop => 3,
             _ => 1,
         }

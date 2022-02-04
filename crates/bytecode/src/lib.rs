@@ -17,19 +17,21 @@ pub fn repl() -> Result<(), Box<dyn Error>> {
     eprintln!("rlox\ntype 'quit' to exit");
     let mut vm = vm::Vm::new();
 
+    let mut buffer = String::new();
     loop {
         eprint!("> ");
         io::stdout().flush()?;
-        let mut buffer = String::new();
         reader.read_line(&mut buffer)?;
-        if buffer == "quit\n" {
-            break;
+        match buffer.trim_end() {
+            "quit" => break,
+            _ => (),
         }
 
         match vm.interpret(&buffer) {
             Err(e) => eprintln!("{}", e),
             Ok(()) => (),
         }
+        buffer.clear();
     }
     Ok(())
 }

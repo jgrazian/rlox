@@ -1,11 +1,13 @@
 use std::fmt;
 
 use crate::chunk::Chunk;
+use crate::value::Value;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Clone)]
 pub enum Obj {
     String(String),
     Function(Function),
+    Native(fn(usize, &[Value]) -> Value),
 }
 
 impl fmt::Display for Obj {
@@ -19,6 +21,7 @@ impl fmt::Display for Obj {
                 },
                 f,
             ),
+            Self::Native(..) => write!(f, "<native fn>"),
         }
     }
 }

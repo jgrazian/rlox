@@ -1,5 +1,6 @@
 use core::ptr;
 use std::collections::HashMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::chunk::OpCode::*;
 use crate::compiler::{compile, U8_COUNT};
@@ -39,13 +40,17 @@ pub struct Vm {
 impl Vm {
     pub fn new() -> Self {
         const NIL: Value = Value::Nil;
-        Self {
+
+        let mut vm = Self {
             frames: [CallFrame::default(); FRAME_MAX],
             frame_count: 0,
             stack: [NIL; STACK_MAX],
             stack_top: 0,
             globals: HashMap::new(),
-        }
+        };
+
+        vm.define_native("clock", clock_native);
+        vm
     }
 
     pub fn interpret(&mut self, source: &str) -> Result<(), LoxError> {
@@ -291,6 +296,15 @@ impl Vm {
         match callee {
             Value::Obj(o) => match unsafe { &*o } {
                 Obj::Function(ref f) => self.call(f, arg_count),
+                Obj::Native(native) => {
+                    let result = native(
+                        arg_count,
+                        &self.stack[self.stack_top - arg_count..self.stack_top],
+                    );
+                    self.stack_top -= arg_count + 1;
+                    self.push(result);
+                    Ok(())
+                }
                 _ => self.runtime_error("Can only call functions and classes."),
             },
             _ => self.runtime_error("Can only call functions and classes."),
@@ -321,17 +335,30 @@ impl Vm {
         Ok(())
     }
 
+    fn define_native(&mut self, name: &str, native: fn(usize, &[Value]) -> Value) {
+        self.push(Value::Obj(Box::into_raw(Box::new(Obj::String(
+            name.to_string(),
+        )))));
+        self.push(Value::Obj(Box::into_raw(Box::new(Obj::Native(native)))));
+
+        self.globals
+            .insert(self.stack[0].as_string().to_owned(), self.stack[1]);
+
+        self.pop();
+        self.pop();
+    }
+
     fn runtime_error<T: Into<String>>(&mut self, message: T) -> Result<(), LoxError> {
-        let mut msg = String::new();
+        let mut trace = String::new();
         for i in (0..=self.frame_count - 1).rev() {
             let frame = &self.frames[i];
             let function = unsafe { &*frame.function };
             let line = function.chunk.lines[frame.ip - 1];
 
             if function.name == "" {
-                msg.push_str(&format!("[line {}] in script\n", line));
+                trace.push_str(&format!("[line {}] in script\n", line));
             } else {
-                msg.push_str(&format!("[line {}] in {}()\n", line, function.name));
+                trace.push_str(&format!("[line {}] in {}()\n", line, function.name));
             }
         }
 
@@ -340,7 +367,15 @@ impl Vm {
         Err(LoxError::RuntimeError(format!(
             "{}\n{}",
             message.into(),
-            msg
+            trace
         )))
     }
+}
+
+fn clock_native(_arg_count: usize, _args: &[Value]) -> Value {
+    let time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    Value::Number(time)
 }

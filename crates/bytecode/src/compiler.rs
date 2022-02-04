@@ -4,107 +4,6 @@ use crate::object::{Function, Obj};
 use crate::scanner::{Scanner, Token, TokenType};
 use crate::value::Value;
 
-#[derive(Debug, Clone)]
-pub struct Parser<'s> {
-    scanner: Scanner<'s>,
-    current: Token<'s>,
-    previous: Token<'s>,
-    had_error: bool,
-    panic_mode: bool,
-}
-
-impl<'s> Parser<'s> {
-    fn new(source: &'s str) -> Self {
-        Self {
-            scanner: Scanner::new(source),
-            current: Token {
-                ty: TokenType::Eof,
-                lexeme: "",
-                line: 0,
-            },
-            previous: Token {
-                ty: TokenType::Eof,
-                lexeme: "",
-                line: 0,
-            },
-            had_error: false,
-            panic_mode: false,
-        }
-    }
-
-    fn advance(&mut self) -> Result<(), LoxError> {
-        self.previous = self.current;
-
-        let mut result = Ok(());
-        loop {
-            self.current = self.scanner.scan_token();
-            match self.current.ty {
-                TokenType::Error => match self.error_at_current(self.current.lexeme) {
-                    Some(e) => result = Err(e),
-                    None => {}
-                },
-                _ => break,
-            }
-        }
-
-        result
-    }
-
-    fn check_token(&self, ty: TokenType) -> bool {
-        self.current.ty == ty
-    }
-
-    fn consume(&mut self, ty: TokenType, message: &str) -> Result<(), LoxError> {
-        if self.check_token(ty) {
-            return self.advance();
-        }
-
-        match self.error_at_current(message) {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
-    }
-
-    fn match_token(&mut self, ty: TokenType) -> Result<bool, LoxError> {
-        match self.check_token(ty) {
-            false => Ok(false),
-            true => {
-                self.advance()?;
-                Ok(true)
-            }
-        }
-    }
-
-    // Errors
-    fn error_at_current(&mut self, message: &str) -> Option<LoxError> {
-        self.error_at(self.current, message)
-    }
-
-    fn error(&mut self, message: &str) -> Option<LoxError> {
-        self.error_at(self.previous, message)
-    }
-
-    fn error_at(&mut self, token: Token<'s>, message: &str) -> Option<LoxError> {
-        if self.panic_mode {
-            return None;
-        }
-        self.panic_mode = true;
-
-        let location = match token.ty {
-            TokenType::Eof => " at end".to_string(),
-            TokenType::Error => "".to_string(),
-            _ => format!(" at '{}'", token.lexeme),
-        };
-
-        self.had_error = true;
-        Some(LoxError::ParseError {
-            message: message.to_string(),
-            location,
-            line: token.line,
-        })
-    }
-}
-
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 enum Precedence {
     None = 0,
@@ -929,5 +828,106 @@ impl<'s, 't> Compiler<'s, 't> {
                 precedence: Precedence::None,
             },
         }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct Parser<'s> {
+    scanner: Scanner<'s>,
+    current: Token<'s>,
+    previous: Token<'s>,
+    had_error: bool,
+    panic_mode: bool,
+}
+
+impl<'s> Parser<'s> {
+    fn new(source: &'s str) -> Self {
+        Self {
+            scanner: Scanner::new(source),
+            current: Token {
+                ty: TokenType::Eof,
+                lexeme: "",
+                line: 0,
+            },
+            previous: Token {
+                ty: TokenType::Eof,
+                lexeme: "",
+                line: 0,
+            },
+            had_error: false,
+            panic_mode: false,
+        }
+    }
+
+    fn advance(&mut self) -> Result<(), LoxError> {
+        self.previous = self.current;
+
+        let mut result = Ok(());
+        loop {
+            self.current = self.scanner.scan_token();
+            match self.current.ty {
+                TokenType::Error => match self.error_at_current(self.current.lexeme) {
+                    Some(e) => result = Err(e),
+                    None => {}
+                },
+                _ => break,
+            }
+        }
+
+        result
+    }
+
+    fn check_token(&self, ty: TokenType) -> bool {
+        self.current.ty == ty
+    }
+
+    fn consume(&mut self, ty: TokenType, message: &str) -> Result<(), LoxError> {
+        if self.check_token(ty) {
+            return self.advance();
+        }
+
+        match self.error_at_current(message) {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    fn match_token(&mut self, ty: TokenType) -> Result<bool, LoxError> {
+        match self.check_token(ty) {
+            false => Ok(false),
+            true => {
+                self.advance()?;
+                Ok(true)
+            }
+        }
+    }
+
+    // Errors
+    fn error_at_current(&mut self, message: &str) -> Option<LoxError> {
+        self.error_at(self.current, message)
+    }
+
+    fn error(&mut self, message: &str) -> Option<LoxError> {
+        self.error_at(self.previous, message)
+    }
+
+    fn error_at(&mut self, token: Token<'s>, message: &str) -> Option<LoxError> {
+        if self.panic_mode {
+            return None;
+        }
+        self.panic_mode = true;
+
+        let location = match token.ty {
+            TokenType::Eof => " at end".to_string(),
+            TokenType::Error => "".to_string(),
+            _ => format!(" at '{}'", token.lexeme),
+        };
+
+        self.had_error = true;
+        Some(LoxError::ParseError {
+            message: message.to_string(),
+            location,
+            line: token.line,
+        })
     }
 }
