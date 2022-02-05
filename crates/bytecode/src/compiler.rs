@@ -441,7 +441,7 @@ impl<'s, 't> Compiler<'s, 't> {
         let function = compiler.end_compiler();
 
         let constant = self.make_constant(Value::new_obj(Obj::Function(function)));
-        self.emit_bytes(OpCode::OpConstant, constant);
+        self.emit_bytes(OpCode::OpClosure, constant);
         Ok(())
     }
 

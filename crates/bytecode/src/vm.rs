@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::chunk::OpCode::*;
 use crate::compiler::{compile, U8_COUNT};
 use crate::error::LoxError;
-use crate::object::{Function, Obj};
+use crate::object::{Closure, Function, Obj};
 use crate::value::Value;
 
 const FRAME_MAX: usize = 64;
@@ -13,7 +13,7 @@ const STACK_MAX: usize = FRAME_MAX * U8_COUNT;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct CallFrame {
-    function: *const Function,
+    closure: *const Closure,
     ip: usize,
     slot_base: usize,
 }
@@ -21,7 +21,7 @@ struct CallFrame {
 impl Default for CallFrame {
     fn default() -> Self {
         Self {
-            function: ptr::null(),
+            closure: ptr::null(),
             ip: usize::default(),
             slot_base: usize::default(),
         }
@@ -57,13 +57,17 @@ impl Vm {
         let function = compile(source)?;
 
         self.push(Value::new_obj(Obj::Function(function)));
+        let closure = Closure::new(self.stack[0].as_function());
+        self.pop();
+        self.push(Value::new_obj(Obj::Closure(closure)));
+
         self.frames[0] = CallFrame {
-            function: self.stack[0].as_function(),
+            closure: self.stack[0].as_closure(),
             ip: 0,
             slot_base: 0,
         };
 
-        self.call(self.stack[0].as_function(), 0)?;
+        self.call(self.stack[0].as_closure(), 0)?;
         self.run()
     }
 
@@ -81,7 +85,7 @@ impl Vm {
                 unsafe {
                     (*frame).ip += 1;
                     let i = (*frame).ip - 1;
-                    (*(*frame).function).chunk.code[i]
+                    (*(*(*frame).closure).function).chunk.code[i]
                 }
             };
         }
@@ -91,8 +95,8 @@ impl Vm {
                 unsafe {
                     (*frame).ip += 2;
                     let i = (*frame).ip;
-                    ((*(*frame).function).chunk.code[i - 2] as u16) << 8
-                        | (*(*frame).function).chunk.code[i - 1] as u16
+                    ((*(*(*frame).closure).function).chunk.code[i - 2] as u16) << 8
+                        | (*(*(*frame).closure).function).chunk.code[i - 1] as u16
                 }
             };
         }
@@ -100,7 +104,7 @@ impl Vm {
         macro_rules! read_constant {
             () => {{
                 let byte = read_byte!() as usize;
-                unsafe { (*(*frame).function).chunk.constants[byte] }
+                unsafe { (*(*(*frame).closure).function).chunk.constants[byte] }
             }};
         }
 
@@ -177,12 +181,11 @@ impl Vm {
                     self.pop();
                 }
                 OpSetGlobal => {
-                    let name = read_constant!().as_string().to_string();
                     let _v = *self.peek(0);
-                    match self.globals.get_mut(&name) {
+                    match self.globals.get_mut(read_constant!().as_string()) {
                         Some(v) => *v = _v,
-                        None => {
-                            let msg = format!("Undefined variable '{}'.", name);
+                        name @ None => {
+                            let msg = format!("Undefined variable '{}'.", name.unwrap());
                             return self.runtime_error(msg);
                         }
                     }
@@ -249,6 +252,11 @@ impl Vm {
                     self.call_value(*self.peek(arg_count), arg_count)?;
                     frame = &mut self.frames[self.frame_count - 1];
                 }
+                OpClosure => {
+                    let function: *const Function = read_constant!().as_function();
+                    let closure = Closure::new(function);
+                    self.push(Value::new_obj(Obj::Closure(closure)));
+                }
                 OpReturn => {
                     let result = *self.pop();
                     self.frame_count -= 1;
@@ -295,7 +303,7 @@ impl Vm {
     fn call_value(&mut self, callee: Value, arg_count: usize) -> Result<(), LoxError> {
         match callee {
             Value::Obj(o) => match unsafe { &*o } {
-                Obj::Function(ref f) => self.call(f, arg_count),
+                Obj::Closure(f) => self.call(f, arg_count),
                 Obj::Native(native) => {
                     let result = native(
                         arg_count,
@@ -311,11 +319,11 @@ impl Vm {
         }
     }
 
-    fn call(&mut self, function: *const Function, arg_count: usize) -> Result<(), LoxError> {
-        if arg_count != unsafe { (*function).arity } {
+    fn call(&mut self, closure: *const Closure, arg_count: usize) -> Result<(), LoxError> {
+        if arg_count != unsafe { (*(*closure).function).arity } {
             let msg = format!(
                 "Expected {} arguments but got {}.",
-                unsafe { (*function).arity },
+                unsafe { (*(*closure).function).arity },
                 arg_count
             );
             return self.runtime_error(msg);
@@ -328,7 +336,7 @@ impl Vm {
         let frame = &mut self.frames[self.frame_count];
         self.frame_count += 1;
 
-        frame.function = function;
+        frame.closure = closure;
         frame.ip = 0;
         frame.slot_base = self.stack_top - arg_count - 1;
 
@@ -336,10 +344,8 @@ impl Vm {
     }
 
     fn define_native(&mut self, name: &str, native: fn(usize, &[Value]) -> Value) {
-        self.push(Value::Obj(Box::into_raw(Box::new(Obj::String(
-            name.to_string(),
-        )))));
-        self.push(Value::Obj(Box::into_raw(Box::new(Obj::Native(native)))));
+        self.push(Value::new_obj(Obj::String(name.to_string())));
+        self.push(Value::new_obj(Obj::Native(native)));
 
         self.globals
             .insert(self.stack[0].as_string().to_owned(), self.stack[1]);
@@ -352,7 +358,7 @@ impl Vm {
         let mut trace = String::new();
         for i in (0..=self.frame_count - 1).rev() {
             let frame = &self.frames[i];
-            let function = unsafe { &*frame.function };
+            let function = unsafe { &(*(*frame.closure).function) };
             let line = function.chunk.lines[frame.ip - 1];
 
             if function.name == "" {

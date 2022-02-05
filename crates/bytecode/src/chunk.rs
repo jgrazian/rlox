@@ -28,6 +28,7 @@ pub enum OpCode {
     OpJumpIfFalse,
     OpLoop,
     OpCall,
+    OpClosure,
     OpReturn,
 }
 
@@ -157,6 +158,13 @@ impl Chunk {
             OpCode::OpJumpIfFalse => jump_instr(self, "OP_JUMP_IF_FALSE", offset, 1),
             OpCode::OpLoop => jump_instr(self, "OP_LOOP", offset, -1),
             OpCode::OpCall => byte_instr(self, "OP_CALL", offset),
+            OpCode::OpClosure => {
+                let constant = self.code[offset + 1] as usize;
+                format!(
+                    "{:<16} {:>4} {}",
+                    "OP_CLOSURE", constant, self.constants[constant]
+                )
+            }
             OpCode::OpReturn => "OP_RETURN".to_string(),
         };
 

@@ -7,6 +7,7 @@ use crate::value::Value;
 pub enum Obj {
     String(String),
     Function(Function),
+    Closure(Closure),
     Native(fn(usize, &[Value]) -> Value),
 }
 
@@ -18,6 +19,13 @@ impl fmt::Display for Obj {
                 &match fun.name.len() {
                     0 => "<script>".to_string(),
                     _ => format!("<fn {}>", fun.name),
+                },
+                f,
+            ),
+            Self::Closure(closure) => fmt::Display::fmt(
+                &match unsafe { &(*closure.function).name } {
+                    n if n.len() == 0 => "<script>".to_string(),
+                    n => format!("<fn {}>", n),
                 },
                 f,
             ),
@@ -48,5 +56,16 @@ impl Function {
             chunk: Chunk::new(),
             name: name.to_string(),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Closure {
+    pub function: *const Function,
+}
+
+impl Closure {
+    pub fn new(function: *const Function) -> Self {
+        Self { function }
     }
 }

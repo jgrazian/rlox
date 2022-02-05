@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::object::{Function, Obj};
+use crate::object::{Closure, Function, Obj};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
@@ -40,6 +40,18 @@ impl Value {
                 match &**o {
                     Obj::Function(f) => f,
                     _ => panic!("Obj is not a function"),
+                }
+            },
+            _ => panic!("Value is not a obj"),
+        }
+    }
+
+    pub fn as_closure(&self) -> &Closure {
+        match self {
+            Self::Obj(o) => unsafe {
+                match &**o {
+                    Obj::Closure(c) => c,
+                    _ => panic!("Obj is not a closure"),
                 }
             },
             _ => panic!("Value is not a obj"),

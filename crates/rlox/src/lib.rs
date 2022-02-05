@@ -1,8 +1,10 @@
 use std::cell::RefCell;
 use std::rc::Rc;
 
+#[cfg(target_arch = "wasm32")]
 use wasm_bindgen::prelude::*;
 
+#[cfg(target_arch = "wasm32")]
 #[wasm_bindgen]
 pub fn run(source: &str) -> String {
     let interpreter = Rc::new(RefCell::new(tree_walk::Interpreter::new()));
