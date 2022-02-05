@@ -38,14 +38,14 @@ impl Precedence {
 }
 
 pub fn compile(source: &str) -> Result<Function, LoxError> {
-    let mut parser = Parser::new(source);
-    let function = Compiler::new(&mut parser, FunctionType::Script).compile()?;
+    // let mut parser = Parser::new(source);
+    let function = Compiler::new(source).compile()?;
     Ok(function)
 }
 
-struct ParseRule<'s, 't> {
-    prefix: Option<fn(&mut Compiler<'s, 't>, bool) -> Result<(), LoxError>>,
-    infix: Option<fn(&mut Compiler<'s, 't>, bool) -> Result<(), LoxError>>,
+struct ParseRule<'s> {
+    prefix: Option<fn(&mut Compiler<'s>, bool) -> Result<(), LoxError>>,
+    infix: Option<fn(&mut Compiler<'s>, bool) -> Result<(), LoxError>>,
     precedence: Precedence,
 }
 
@@ -53,6 +53,12 @@ struct ParseRule<'s, 't> {
 struct Local<'s> {
     name: Token<'s>,
     depth: isize,
+}
+
+#[derive(Debug, Default, Clone, Copy)]
+struct Upvalue {
+    index: u8,
+    is_local: bool,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -63,45 +69,64 @@ pub enum FunctionType {
 
 pub const U8_COUNT: usize = 256;
 
-pub struct Compiler<'s, 't> {
-    parser: &'t mut Parser<'s>,
+pub struct Compiler<'s> {
+    parser: Option<Parser<'s>>,
+    enclosing: Option<*mut Compiler<'s>>,
+
     function: Function,
     ty: FunctionType,
 
+    upvalues: [Upvalue; U8_COUNT],
     locals: [Local<'s>; U8_COUNT],
     local_count: usize,
     scope_depth: usize,
 }
 
-impl<'s, 't> Compiler<'s, 't> {
-    pub fn new(parser: &'t mut Parser<'s>, ty: FunctionType) -> Self {
-        const LOCAL: Local = Local {
-            name: Token {
-                ty: TokenType::Eof,
-                lexeme: "",
-                line: 0,
-            },
-            depth: 0,
-        };
+impl<'s> Compiler<'s> {
+    const LOCAL: Local<'s> = Local {
+        name: Token {
+            ty: TokenType::Eof,
+            lexeme: "",
+            line: 0,
+        },
+        depth: 0,
+    };
 
-        let function = if ty != FunctionType::Script {
-            Function::named(parser.previous.lexeme)
-        } else {
-            Function::new()
-        };
-
+    pub fn new(source: &'s str) -> Self {
         Self {
-            parser,
+            parser: Some(Parser::new(source)),
+            enclosing: None,
+            function: Function::new(),
+            ty: FunctionType::Script,
+            upvalues: [Upvalue::default(); U8_COUNT],
+            locals: [Self::LOCAL; U8_COUNT],
+            local_count: 1, // Function is always the 0th local
+            scope_depth: 0,
+        }
+    }
+
+    fn spawn(&mut self, ty: FunctionType) -> Compiler<'s> {
+        let function = Function::named(self.parser().previous.lexeme);
+        Self {
+            parser: None,
+            enclosing: Some(self),
             function,
             ty,
-            locals: [LOCAL; U8_COUNT],
+            upvalues: [Upvalue::default(); U8_COUNT],
+            locals: [Self::LOCAL; U8_COUNT],
             local_count: 1, // Function is always the 0th local
             scope_depth: 0,
         }
     }
 
     fn parser(&mut self) -> &mut Parser<'s> {
-        self.parser
+        if let Some(parser) = &mut self.parser {
+            parser
+        } else if let Some(enclosing) = self.enclosing {
+            unsafe { (*enclosing).parser() }
+        } else {
+            panic!("No parser!")
+        }
     }
 
     pub fn compile(&mut self) -> Result<Function, LoxError> {
@@ -342,11 +367,17 @@ impl<'s, 't> Compiler<'s, 't> {
     fn named_variable(&mut self, name: Token, can_assign: bool) -> Result<(), LoxError> {
         let mut arg = self.resolve_local(name)?;
         let (get_op, set_op) = match arg {
-            -1 => {
-                arg = self.identifier_constant(name) as i8;
-                (OpCode::OpGetGlobal, OpCode::OpSetGlobal)
-            }
-            _ => (OpCode::OpGetLocal, OpCode::OpSetLocal),
+            v if v != -1 => (OpCode::OpGetLocal, OpCode::OpSetLocal),
+            _ => match self.resolve_upvalue(name)? {
+                -1 => {
+                    arg = self.identifier_constant(name) as i8;
+                    (OpCode::OpGetGlobal, OpCode::OpSetGlobal)
+                }
+                v @ _ => {
+                    arg = v;
+                    (OpCode::OpGetUpvalue, OpCode::OpSetUpvalue)
+                }
+            },
         };
 
         if can_assign && self.parser().match_token(TokenType::Equal)? {
@@ -407,7 +438,7 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn function(&mut self, ty: FunctionType) -> Result<(), LoxError> {
-        let mut compiler = Compiler::new(self.parser, ty);
+        let mut compiler = self.spawn(ty);
         compiler.begin_scope();
 
         compiler
@@ -439,9 +470,21 @@ impl<'s, 't> Compiler<'s, 't> {
         compiler.block()?;
 
         let function = compiler.end_compiler();
+        let upvalue_count = function.upvalue_count;
 
         let constant = self.make_constant(Value::new_obj(Obj::Function(function)));
         self.emit_bytes(OpCode::OpClosure, constant);
+
+        for i in 0..upvalue_count {
+            if compiler.upvalues[i].is_local {
+                self.emit_byte(1);
+            } else {
+                self.emit_byte(0);
+            }
+
+            self.emit_byte(compiler.upvalues[i].index);
+        }
+
         Ok(())
     }
 
@@ -638,6 +681,43 @@ impl<'s, 't> Compiler<'s, 't> {
         return Ok(-1);
     }
 
+    fn resolve_upvalue(&mut self, name: Token) -> Result<i8, LoxError> {
+        if self.enclosing.is_none() {
+            return Ok(-1);
+        }
+
+        let local = unsafe { (*self.enclosing.unwrap()).resolve_local(name)? };
+        if local != -1 {
+            return self.add_upvalue(local as u8, true).map(|v| v as i8);
+        }
+
+        let upvalue = unsafe { (*self.enclosing.unwrap()).resolve_upvalue(name)? };
+        if upvalue != -1 {
+            return self.add_upvalue(upvalue as u8, false).map(|v| v as i8);
+        }
+
+        return Ok(-1);
+    }
+
+    fn add_upvalue(&mut self, index: u8, is_local: bool) -> Result<u8, LoxError> {
+        let upvalue_count = self.function.upvalue_count;
+
+        for i in 0..upvalue_count as usize {
+            let upvalue = self.upvalues[i];
+            if upvalue.index == index && upvalue.is_local == is_local {
+                return Ok(i as u8);
+            }
+        }
+
+        if upvalue_count == U8_COUNT {
+            self.error("Too many closure variables in function.");
+        }
+
+        self.upvalues[upvalue_count] = Upvalue { index, is_local };
+        self.function.upvalue_count += 1;
+        Ok(self.function.upvalue_count as u8 - 1)
+    }
+
     fn declare_variable(&mut self) -> Result<(), LoxError> {
         if self.scope_depth == 0 {
             return Ok(());
@@ -752,7 +832,7 @@ impl<'s, 't> Compiler<'s, 't> {
         })
     }
 
-    fn get_rule(ty: TokenType) -> ParseRule<'s, 't> {
+    fn get_rule(ty: TokenType) -> ParseRule<'s> {
         match ty {
             TokenType::LeftParen => ParseRule {
                 prefix: Some(Self::grouping),

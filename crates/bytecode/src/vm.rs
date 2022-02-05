@@ -190,6 +190,8 @@ impl Vm {
                         }
                     }
                 }
+                OpGetUpvalue => (),
+                OpSetUpvalue => (),
                 OpEqual => {
                     let (a, b) = self.pop2();
                     let v = Value::Bool(a == b);

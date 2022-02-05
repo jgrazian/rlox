@@ -37,6 +37,7 @@ impl fmt::Display for Obj {
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct Function {
     pub arity: usize,
+    pub upvalue_count: usize,
     pub chunk: Chunk,
     pub name: String,
 }
@@ -45,6 +46,7 @@ impl Function {
     pub fn new() -> Self {
         Self {
             arity: 0,
+            upvalue_count: 0,
             chunk: Chunk::new(),
             name: String::with_capacity(16),
         }
@@ -53,6 +55,7 @@ impl Function {
     pub fn named(name: &str) -> Self {
         Self {
             arity: 0,
+            upvalue_count: 0,
             chunk: Chunk::new(),
             name: name.to_string(),
         }
