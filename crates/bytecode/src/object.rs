@@ -1,4 +1,5 @@
 use std::fmt;
+use std::ptr;
 
 use crate::chunk::Chunk;
 use crate::value::Value;
@@ -9,6 +10,7 @@ pub enum Obj {
     Function(Function),
     Closure(Closure),
     Native(fn(usize, &[Value]) -> Value),
+    Upvalue(Upvalue),
 }
 
 impl fmt::Display for Obj {
@@ -30,6 +32,7 @@ impl fmt::Display for Obj {
                 f,
             ),
             Self::Native(..) => write!(f, "<native fn>"),
+            Self::Upvalue(..) => write!(f, "<upvalue>"),
         }
     }
 }
@@ -65,10 +68,19 @@ impl Function {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Closure {
     pub function: *const Function,
+    pub upvalues: Vec<*mut Upvalue>,
 }
 
 impl Closure {
     pub fn new(function: *const Function) -> Self {
-        Self { function }
+        Self {
+            function,
+            upvalues: vec![ptr::null_mut(); unsafe { (*function).upvalue_count }],
+        }
     }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct Upvalue {
+    pub location: *mut Value,
 }

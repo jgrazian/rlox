@@ -5,7 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use crate::chunk::OpCode::*;
 use crate::compiler::{compile, U8_COUNT};
 use crate::error::LoxError;
-use crate::object::{Closure, Function, Obj};
+use crate::object::{Closure, Function, Obj, Upvalue};
 use crate::value::Value;
 
 const FRAME_MAX: usize = 64;
@@ -13,7 +13,7 @@ const STACK_MAX: usize = FRAME_MAX * U8_COUNT;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct CallFrame {
-    closure: *const Closure,
+    closure: *mut Closure,
     ip: usize,
     slot_base: usize,
 }
@@ -21,7 +21,7 @@ struct CallFrame {
 impl Default for CallFrame {
     fn default() -> Self {
         Self {
-            closure: ptr::null(),
+            closure: ptr::null_mut(),
             ip: usize::default(),
             slot_base: usize::default(),
         }
@@ -190,8 +190,18 @@ impl Vm {
                         }
                     }
                 }
-                OpGetUpvalue => (),
-                OpSetUpvalue => (),
+                OpGetUpvalue => {
+                    let slot = read_byte!() as usize;
+                    unsafe {
+                        self.push(*(*(*(*frame).closure).upvalues[slot]).location);
+                    }
+                }
+                OpSetUpvalue => {
+                    let slot = read_byte!() as usize;
+                    unsafe {
+                        (*(*(*frame).closure).upvalues[slot]).location = self.peek_mut(0);
+                    }
+                }
                 OpEqual => {
                     let (a, b) = self.pop2();
                     let v = Value::Bool(a == b);
@@ -258,6 +268,20 @@ impl Vm {
                     let function: *const Function = read_constant!().as_function();
                     let closure = Closure::new(function);
                     self.push(Value::new_obj(Obj::Closure(closure)));
+
+                    for i in 0..self.peek(0).as_closure().upvalues.len() {
+                        let is_local = read_byte!() != 0;
+                        let index = read_byte!() as usize;
+
+                        if is_local {
+                            let value_ptr: *mut Value = &mut value!(index);
+                            let upvalue = self.capture_upvalue(value_ptr);
+                            self.peek(0).as_closure().upvalues[i] = upvalue;
+                        } else {
+                            self.peek(0).as_closure().upvalues[i] =
+                                unsafe { (*(*frame).closure).upvalues[index] }
+                        }
+                    }
                 }
                 OpReturn => {
                     let result = *self.pop();
@@ -302,9 +326,20 @@ impl Vm {
         &self.stack[self.stack_top - 1 - distance]
     }
 
+    fn peek_mut(&mut self, distance: usize) -> &mut Value {
+        &mut self.stack[self.stack_top - 1 - distance]
+    }
+
+    fn capture_upvalue(&self, local: *mut Value) -> *mut Upvalue {
+        let created_upvalue = Box::into_raw(Box::new(Upvalue {
+            location: local as *mut Value,
+        }));
+        created_upvalue
+    }
+
     fn call_value(&mut self, callee: Value, arg_count: usize) -> Result<(), LoxError> {
         match callee {
-            Value::Obj(o) => match unsafe { &*o } {
+            Value::Obj(o) => match unsafe { &mut *o } {
                 Obj::Closure(f) => self.call(f, arg_count),
                 Obj::Native(native) => {
                     let result = native(
@@ -321,7 +356,7 @@ impl Vm {
         }
     }
 
-    fn call(&mut self, closure: *const Closure, arg_count: usize) -> Result<(), LoxError> {
+    fn call(&mut self, closure: *mut Closure, arg_count: usize) -> Result<(), LoxError> {
         if arg_count != unsafe { (*(*closure).function).arity } {
             let msg = format!(
                 "Expected {} arguments but got {}.",

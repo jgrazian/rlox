@@ -7,7 +7,7 @@ pub enum Value {
     Bool(bool),
     Nil,
     Number(f64),
-    Obj(*const Obj),
+    Obj(*mut Obj),
 }
 
 impl Value {
@@ -46,10 +46,10 @@ impl Value {
         }
     }
 
-    pub fn as_closure(&self) -> &Closure {
+    pub fn as_closure(&self) -> &mut Closure {
         match self {
             Self::Obj(o) => unsafe {
-                match &**o {
+                match &mut **o {
                     Obj::Closure(c) => c,
                     _ => panic!("Obj is not a closure"),
                 }

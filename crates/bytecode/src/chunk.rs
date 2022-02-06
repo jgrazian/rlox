@@ -34,22 +34,6 @@ pub enum OpCode {
     OpReturn,
 }
 
-impl OpCode {
-    fn size(&self) -> usize {
-        match self {
-            Self::OpConstant
-            | Self::OpGetGlobal
-            | Self::OpDefineGlobal
-            | Self::OpSetGlobal
-            | Self::OpGetLocal
-            | Self::OpSetLocal
-            | Self::OpCall => 2,
-            Self::OpJump | Self::OpJumpIfFalse | Self::OpLoop => 3,
-            _ => 1,
-        }
-    }
-}
-
 impl From<u8> for OpCode {
     fn from(v: u8) -> Self {
         unsafe { std::mem::transmute::<u8, OpCode>(v) }
