@@ -53,6 +53,7 @@ struct ParseRule<'s> {
 struct Local<'s> {
     name: Token<'s>,
     depth: isize,
+    is_captured: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -90,6 +91,7 @@ impl<'s> Compiler<'s> {
             line: 0,
         },
         depth: 0,
+        is_captured: false,
     };
 
     pub fn new(source: &'s str) -> Self {
@@ -468,6 +470,7 @@ impl<'s> Compiler<'s> {
             .parser()
             .consume(TokenType::LeftBrance, "Expect '{' before function body.")?;
         compiler.block()?;
+        compiler.end_scope();
 
         let function = compiler.end_compiler();
         let upvalue_count = function.upvalue_count;
@@ -576,7 +579,11 @@ impl<'s> Compiler<'s> {
         while self.local_count > 0
             && self.locals[self.local_count - 1].depth > self.scope_depth as isize
         {
-            self.emit_byte(OpCode::OpPop);
+            if self.locals[self.local_count - 1].is_captured {
+                self.emit_byte(OpCode::OpCloseUpvalue);
+            } else {
+                self.emit_byte(OpCode::OpPop);
+            }
             self.local_count -= 1;
         }
     }
@@ -660,7 +667,11 @@ impl<'s> Compiler<'s> {
             }
         }
 
-        self.locals[self.local_count as usize] = Local { name, depth: -1 };
+        self.locals[self.local_count as usize] = Local {
+            name,
+            depth: -1,
+            is_captured: false,
+        };
         self.local_count += 1;
         Ok(())
     }
@@ -688,6 +699,9 @@ impl<'s> Compiler<'s> {
 
         let local = unsafe { (*self.enclosing.unwrap()).resolve_local(name)? };
         if local != -1 {
+            unsafe {
+                (*self.enclosing.unwrap()).locals[local as usize].is_captured = true;
+            }
             return self.add_upvalue(local as u8, true).map(|v| v as i8);
         }
 

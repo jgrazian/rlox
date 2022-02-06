@@ -83,4 +83,6 @@ impl Closure {
 #[derive(Debug, Clone, PartialEq)]
 pub struct Upvalue {
     pub location: *mut Value,
+    pub closed: Value,
+    pub next: *mut Upvalue,
 }

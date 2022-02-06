@@ -31,6 +31,7 @@ pub enum OpCode {
     OpLoop,
     OpCall,
     OpClosure,
+    OpCloseUpvalue,
     OpReturn,
 }
 
@@ -193,6 +194,7 @@ impl Chunk {
                 }
                 return (offset, top);
             }
+            OpCode::OpCloseUpvalue => single_instr("OP_CLOSE_UPVALUE"),
             OpCode::OpReturn => single_instr("OP_RETURN"),
         };
 

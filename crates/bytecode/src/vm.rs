@@ -31,6 +31,7 @@ impl Default for CallFrame {
 pub struct Vm {
     frames: [CallFrame; FRAME_MAX],
     frame_count: usize,
+    open_upvalues: *mut Upvalue,
 
     stack: [Value; STACK_MAX],
     stack_top: usize,
@@ -44,6 +45,7 @@ impl Vm {
         let mut vm = Self {
             frames: [CallFrame::default(); FRAME_MAX],
             frame_count: 0,
+            open_upvalues: ptr::null_mut(),
             stack: [NIL; STACK_MAX],
             stack_top: 0,
             globals: HashMap::new(),
@@ -137,8 +139,11 @@ impl Vm {
                     .for_each(|v| eprint!("[ {:>3} ]", v));
                 eprint!("\n");
                 let ip = (*frame).ip;
-                let op = (*(*frame).function).chunk.code[ip].into();
-                eprintln!("{}", (*(*frame).function).chunk.debug_op(ip, &op));
+                let op = (*(*(*frame).closure).function).chunk.code[ip].into();
+                eprintln!(
+                    "{}",
+                    (*(*(*frame).closure).function).chunk.debug_op(ip, &op).1
+                );
             }
 
             match read_byte!().into() {
@@ -199,7 +204,7 @@ impl Vm {
                 OpSetUpvalue => {
                     let slot = read_byte!() as usize;
                     unsafe {
-                        (*(*(*frame).closure).upvalues[slot]).location = self.peek_mut(0);
+                        *(*(*(*frame).closure).upvalues[slot]).location = *self.peek(0);
                     }
                 }
                 OpEqual => {
@@ -281,10 +286,25 @@ impl Vm {
                             self.peek(0).as_closure().upvalues[i] =
                                 unsafe { (*(*frame).closure).upvalues[index] }
                         }
+
+                        // dbg!(unsafe { &self.peek(0).as_closure().upvalues[i] });
+                        // dbg!(unsafe { &(*self.peek(0).as_closure().upvalues[i]).location });
+                        // dbg!(unsafe {
+                        //     &(*(*self.peek(0).as_closure().upvalues[i]).location).as_string()
+                        // });
                     }
+                }
+                OpCloseUpvalue => {
+                    let ptr: *mut Value = &mut self.stack[self.stack_top - 1];
+                    self.close_upvalues(ptr);
+                    self.pop();
                 }
                 OpReturn => {
                     let result = *self.pop();
+                    unsafe {
+                        let ptr: *mut Value = &mut self.stack[(*frame).slot_base];
+                        self.close_upvalues(ptr);
+                    }
                     self.frame_count -= 1;
                     if self.frame_count == 0 {
                         self.reset_stack();
@@ -330,11 +350,44 @@ impl Vm {
         &mut self.stack[self.stack_top - 1 - distance]
     }
 
-    fn capture_upvalue(&self, local: *mut Value) -> *mut Upvalue {
+    fn capture_upvalue(&mut self, local: *mut Value) -> *mut Upvalue {
+        let mut prev_upvalue = ptr::null_mut();
+        let mut upvalue = self.open_upvalues;
+        unsafe {
+            while !upvalue.is_null() && (*upvalue).location > local {
+                prev_upvalue = upvalue;
+                upvalue = (*upvalue).next;
+            }
+
+            if !upvalue.is_null() && (*upvalue).location == local {
+                return upvalue;
+            }
+        }
+
         let created_upvalue = Box::into_raw(Box::new(Upvalue {
             location: local as *mut Value,
+            closed: Value::Nil,
+            next: upvalue,
         }));
+        if prev_upvalue.is_null() {
+            self.open_upvalues = created_upvalue;
+        } else {
+            unsafe {
+                (*prev_upvalue).next = created_upvalue;
+            }
+        }
         created_upvalue
+    }
+
+    fn close_upvalues(&mut self, last_ptr: *mut Value) {
+        unsafe {
+            while !self.open_upvalues.is_null() && (*self.open_upvalues).location >= last_ptr {
+                let upvalue = self.open_upvalues;
+                (*upvalue).closed = *(*upvalue).location;
+                (*upvalue).location = &mut (*upvalue).closed;
+                self.open_upvalues = (*upvalue).next;
+            }
+        }
     }
 
     fn call_value(&mut self, callee: Value, arg_count: usize) -> Result<(), LoxError> {
