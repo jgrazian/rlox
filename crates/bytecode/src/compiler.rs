@@ -37,7 +37,7 @@ impl Precedence {
     }
 }
 
-pub fn compile(source: &str) -> Result<Function, LoxError> {
+pub fn compile(source: &str) -> Result<(Function, *mut Obj), LoxError> {
     // let mut parser = Parser::new(source);
     let function = Compiler::new(source).compile()?;
     Ok(function)
@@ -77,6 +77,8 @@ pub struct Compiler<'s> {
     function: Function,
     ty: FunctionType,
 
+    objects: *mut Obj,
+
     upvalues: [Upvalue; U8_COUNT],
     locals: [Local<'s>; U8_COUNT],
     local_count: usize,
@@ -100,6 +102,7 @@ impl<'s> Compiler<'s> {
             enclosing: None,
             function: Function::new(),
             ty: FunctionType::Script,
+            objects: std::ptr::null_mut(),
             upvalues: [Upvalue::default(); U8_COUNT],
             locals: [Self::LOCAL; U8_COUNT],
             local_count: 1, // Function is always the 0th local
@@ -114,6 +117,7 @@ impl<'s> Compiler<'s> {
             enclosing: Some(self),
             function,
             ty,
+            objects: self.objects,
             upvalues: [Upvalue::default(); U8_COUNT],
             locals: [Self::LOCAL; U8_COUNT],
             local_count: 1, // Function is always the 0th local
@@ -131,7 +135,7 @@ impl<'s> Compiler<'s> {
         }
     }
 
-    pub fn compile(&mut self) -> Result<Function, LoxError> {
+    pub fn compile(&mut self) -> Result<(Function, *mut Obj), LoxError> {
         self.parser().advance()?;
         while !self.parser().match_token(TokenType::Eof)? {
             self.declaration()?;
@@ -357,7 +361,11 @@ impl<'s> Compiler<'s> {
         let mut chars = self.parser().previous.lexeme.chars();
         chars.next();
         chars.next_back();
-        self.emit_constant(Value::new_obj(Obj::String(chars.collect())))
+        let value = Value::new_obj(
+            Obj::String(chars.collect(), self.objects),
+            &mut self.objects,
+        );
+        self.emit_constant(value)
     }
 
     fn variable(&mut self, can_assign: bool) -> Result<(), LoxError> {
@@ -472,10 +480,12 @@ impl<'s> Compiler<'s> {
         compiler.block()?;
         compiler.end_scope();
 
-        let function = compiler.end_compiler();
+        let (function, objs) = compiler.end_compiler();
+        self.objects = objs;
         let upvalue_count = function.upvalue_count;
 
-        let constant = self.make_constant(Value::new_obj(Obj::Function(function)));
+        let value = Value::new_obj(Obj::Function(function, self.objects), &mut self.objects);
+        let constant = self.make_constant(value);
         self.emit_bytes(OpCode::OpClosure, constant);
 
         for i in 0..upvalue_count {
@@ -566,7 +576,11 @@ impl<'s> Compiler<'s> {
     }
 
     fn identifier_constant(&mut self, name: Token) -> u8 {
-        self.make_constant(Value::new_obj(Obj::String(name.lexeme.to_string())))
+        let value = Value::new_obj(
+            Obj::String(name.lexeme.to_string(), self.objects),
+            &mut self.objects,
+        );
+        self.make_constant(value)
     }
 
     fn begin_scope(&mut self) {
@@ -588,7 +602,7 @@ impl<'s> Compiler<'s> {
         }
     }
 
-    fn end_compiler(&mut self) -> Function {
+    fn end_compiler(&mut self) -> (Function, *mut Obj) {
         self.emit_return();
         #[cfg(feature = "debug_print_code")]
         {
@@ -601,7 +615,7 @@ impl<'s> Compiler<'s> {
                 self.current_chunk().disassemble(&name);
             }
         }
-        std::mem::take(&mut self.function)
+        (std::mem::take(&mut self.function), self.objects)
     }
 
     fn emit_return(&mut self) {

@@ -31,6 +31,8 @@ impl Default for CallFrame {
 pub struct Vm {
     frames: [CallFrame; FRAME_MAX],
     frame_count: usize,
+
+    objects: *mut Obj,
     open_upvalues: *mut Upvalue,
 
     stack: [Value; STACK_MAX],
@@ -45,6 +47,7 @@ impl Vm {
         let mut vm = Self {
             frames: [CallFrame::default(); FRAME_MAX],
             frame_count: 0,
+            objects: ptr::null_mut(),
             open_upvalues: ptr::null_mut(),
             stack: [NIL; STACK_MAX],
             stack_top: 0,
@@ -56,12 +59,15 @@ impl Vm {
     }
 
     pub fn interpret(&mut self, source: &str) -> Result<(), LoxError> {
-        let function = compile(source)?;
+        let (function, objs) = compile(source)?;
+        self.merge_obj_lists(objs);
 
-        self.push(Value::new_obj(Obj::Function(function)));
+        let value = Value::new_obj(Obj::Function(function, self.objects), &mut self.objects);
+        self.push(value);
         let closure = Closure::new(self.stack[0].as_function());
         self.pop();
-        self.push(Value::new_obj(Obj::Closure(closure)));
+        let value = Value::new_obj(Obj::Closure(closure, self.objects), &mut self.objects);
+        self.push(value);
 
         self.frames[0] = CallFrame {
             closure: self.stack[0].as_closure(),
@@ -71,6 +77,21 @@ impl Vm {
 
         self.call(self.stack[0].as_closure(), 0)?;
         self.run()
+    }
+
+    fn merge_obj_lists(&mut self, objs: *mut Obj) {
+        unsafe {
+            if objs.is_null() {
+                return;
+            }
+            let head = objs;
+            let mut iter = objs;
+            while !(*iter).next().is_null() {
+                iter = *(*iter).next();
+            }
+            *(*iter).next() = self.objects;
+            self.objects = head;
+        }
     }
 
     fn run(&mut self) -> Result<(), LoxError> {
@@ -218,7 +239,8 @@ impl Vm {
                     (b, a) if b.is_string() && a.is_string() => {
                         let (s1, s2) = self.pop2();
                         let s = s1.as_string().to_owned() + s2.as_string();
-                        self.push(Value::new_obj(Obj::String(s)))
+                        let value = Value::new_obj(Obj::String(s, self.objects), &mut self.objects);
+                        self.push(value)
                     }
                     (Value::Number(b), Value::Number(a)) => {
                         let v = a + b;
@@ -272,7 +294,9 @@ impl Vm {
                 OpClosure => {
                     let function: *const Function = read_constant!().as_function();
                     let closure = Closure::new(function);
-                    self.push(Value::new_obj(Obj::Closure(closure)));
+                    let value =
+                        Value::new_obj(Obj::Closure(closure, self.objects), &mut self.objects);
+                    self.push(value);
 
                     for i in 0..self.peek(0).as_closure().upvalues.len() {
                         let is_local = read_byte!() != 0;
@@ -286,12 +310,6 @@ impl Vm {
                             self.peek(0).as_closure().upvalues[i] =
                                 unsafe { (*(*frame).closure).upvalues[index] }
                         }
-
-                        // dbg!(unsafe { &self.peek(0).as_closure().upvalues[i] });
-                        // dbg!(unsafe { &(*self.peek(0).as_closure().upvalues[i]).location });
-                        // dbg!(unsafe {
-                        //     &(*(*self.peek(0).as_closure().upvalues[i]).location).as_string()
-                        // });
                     }
                 }
                 OpCloseUpvalue => {
@@ -346,10 +364,6 @@ impl Vm {
         &self.stack[self.stack_top - 1 - distance]
     }
 
-    fn peek_mut(&mut self, distance: usize) -> &mut Value {
-        &mut self.stack[self.stack_top - 1 - distance]
-    }
-
     fn capture_upvalue(&mut self, local: *mut Value) -> *mut Upvalue {
         let mut prev_upvalue = ptr::null_mut();
         let mut upvalue = self.open_upvalues;
@@ -364,11 +378,20 @@ impl Vm {
             }
         }
 
-        let created_upvalue = Box::into_raw(Box::new(Upvalue {
-            location: local as *mut Value,
-            closed: Value::Nil,
-            next: upvalue,
-        }));
+        // Have to wrap as obj to add to objects list
+        let value = Value::new_obj(
+            Obj::Upvalue(
+                Upvalue {
+                    location: local as *mut Value,
+                    closed: Value::Nil,
+                    next: upvalue,
+                },
+                self.objects,
+            ),
+            &mut self.objects,
+        );
+        let created_upvalue = value.as_upvalue();
+
         if prev_upvalue.is_null() {
             self.open_upvalues = created_upvalue;
         } else {
@@ -393,8 +416,8 @@ impl Vm {
     fn call_value(&mut self, callee: Value, arg_count: usize) -> Result<(), LoxError> {
         match callee {
             Value::Obj(o) => match unsafe { &mut *o } {
-                Obj::Closure(f) => self.call(f, arg_count),
-                Obj::Native(native) => {
+                Obj::Closure(f, _) => self.call(f, arg_count),
+                Obj::Native(native, _) => {
                     let result = native(
                         arg_count,
                         &self.stack[self.stack_top - arg_count..self.stack_top],
@@ -434,8 +457,13 @@ impl Vm {
     }
 
     fn define_native(&mut self, name: &str, native: fn(usize, &[Value]) -> Value) {
-        self.push(Value::new_obj(Obj::String(name.to_string())));
-        self.push(Value::new_obj(Obj::Native(native)));
+        let value = Value::new_obj(
+            Obj::String(name.to_string(), self.objects),
+            &mut self.objects,
+        );
+        self.push(value);
+        let value = Value::new_obj(Obj::Native(native, self.objects), &mut self.objects);
+        self.push(value);
 
         self.globals
             .insert(self.stack[0].as_string().to_owned(), self.stack[1]);

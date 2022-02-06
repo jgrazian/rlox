@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::object::{Closure, Function, Obj};
+use crate::object::{Closure, Function, Obj, Upvalue};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
@@ -11,8 +11,11 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn new_obj(obj: Obj) -> Self {
-        Self::Obj(Box::into_raw(Box::new(obj)))
+    pub fn new_obj(mut obj: Obj, head: &mut *mut Obj) -> Self {
+        *obj.next() = *head;
+        let alloc_obj = Box::into_raw(Box::new(obj));
+        *head = alloc_obj;
+        Self::Obj(alloc_obj)
     }
 
     pub fn as_number(&self) -> f64 {
@@ -26,7 +29,7 @@ impl Value {
         match self {
             Self::Obj(o) => unsafe {
                 match &**o {
-                    Obj::String(s) => s,
+                    Obj::String(s, _) => s,
                     _ => panic!("Obj is not a string"),
                 }
             },
@@ -38,7 +41,7 @@ impl Value {
         match self {
             Self::Obj(o) => unsafe {
                 match &**o {
-                    Obj::Function(f) => f,
+                    Obj::Function(f, _) => f,
                     _ => panic!("Obj is not a function"),
                 }
             },
@@ -50,8 +53,20 @@ impl Value {
         match self {
             Self::Obj(o) => unsafe {
                 match &mut **o {
-                    Obj::Closure(c) => c,
+                    Obj::Closure(c, _) => c,
                     _ => panic!("Obj is not a closure"),
+                }
+            },
+            _ => panic!("Value is not a obj"),
+        }
+    }
+
+    pub fn as_upvalue(&self) -> &mut Upvalue {
+        match self {
+            Self::Obj(o) => unsafe {
+                match &mut **o {
+                    Obj::Upvalue(u, _) => u,
+                    _ => panic!("Obj is not a upvalue"),
                 }
             },
             _ => panic!("Value is not a obj"),
@@ -69,7 +84,7 @@ impl Value {
         match self {
             Self::Obj(o) => unsafe {
                 match **o {
-                    Obj::String(_) => true,
+                    Obj::String(..) => true,
                     _ => false,
                 }
             },

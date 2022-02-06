@@ -6,25 +6,37 @@ use crate::value::Value;
 
 #[derive(Clone)]
 pub enum Obj {
-    String(String),
-    Function(Function),
-    Closure(Closure),
-    Native(fn(usize, &[Value]) -> Value),
-    Upvalue(Upvalue),
+    String(String, *mut Obj),
+    Function(Function, *mut Obj),
+    Closure(Closure, *mut Obj),
+    Native(fn(usize, &[Value]) -> Value, *mut Obj),
+    Upvalue(Upvalue, *mut Obj),
+}
+
+impl Obj {
+    pub fn next(&mut self) -> &mut *mut Obj {
+        match self {
+            Obj::String(_, next) => next,
+            Obj::Function(_, next) => next,
+            Obj::Closure(_, next) => next,
+            Obj::Native(_, next) => next,
+            Obj::Upvalue(_, next) => next,
+        }
+    }
 }
 
 impl fmt::Display for Obj {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::String(s) => fmt::Display::fmt(s, f),
-            Self::Function(fun) => fmt::Display::fmt(
+            Self::String(s, _) => fmt::Display::fmt(s, f),
+            Self::Function(fun, _) => fmt::Display::fmt(
                 &match fun.name.len() {
                     0 => "<script>".to_string(),
                     _ => format!("<fn {}>", fun.name),
                 },
                 f,
             ),
-            Self::Closure(closure) => fmt::Display::fmt(
+            Self::Closure(closure, _) => fmt::Display::fmt(
                 &match unsafe { &(*closure.function).name } {
                     n if n.len() == 0 => "<script>".to_string(),
                     n => format!("<fn {}>", n),
