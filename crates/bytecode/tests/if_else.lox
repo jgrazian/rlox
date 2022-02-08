@@ -1,0 +1,11 @@
+var i = 0;
+if (false) {
+    print "true";
+} else {
+    /// false
+    print "false";
+    i = 10;
+}
+
+/// 10
+print i;

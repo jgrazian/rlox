@@ -2,7 +2,6 @@ use std::error::Error;
 use std::fs;
 use std::io;
 use std::io::Write;
-use std::process;
 
 mod chunk;
 mod compiler;
@@ -13,6 +12,7 @@ mod value;
 mod vm;
 
 pub fn repl() -> Result<(), Box<dyn Error>> {
+    let mut stdout = io::stdout();
     let reader = io::stdin();
     eprintln!("rlox\ntype 'quit' to exit");
     let mut vm = vm::Vm::new();
@@ -27,7 +27,7 @@ pub fn repl() -> Result<(), Box<dyn Error>> {
             _ => (),
         }
 
-        match vm.interpret(&buffer) {
+        match vm.interpret(&buffer, &mut stdout) {
             Err(e) => eprintln!("{}", e),
             Ok(()) => (),
         }
@@ -36,15 +36,12 @@ pub fn repl() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn run_file(path: &str) -> Result<(), Box<dyn Error>> {
+pub fn run_file(path: &str, out_stream: &mut impl Write) -> Result<(), Box<dyn Error>> {
     let file = fs::read_to_string(path)?;
-    let result = vm::Vm::new().interpret(&file);
+    let result = vm::Vm::new().interpret(&file, out_stream);
 
     match result {
         Ok(_) => Ok(()),
-        Err(e) => {
-            eprint!("{}", e);
-            process::exit(65);
-        }
+        Err(e) => Err(Box::new(e) as Box<dyn Error>),
     }
 }

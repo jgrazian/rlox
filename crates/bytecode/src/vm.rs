@@ -1,5 +1,6 @@
 use core::ptr;
 use std::collections::HashMap;
+use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::chunk::OpCode::*;
@@ -58,8 +59,8 @@ impl Vm {
         vm
     }
 
-    pub fn interpret(&mut self, source: &str) -> Result<(), LoxError> {
-        let (function, objs) = compile(source)?;
+    pub fn interpret(&mut self, source: &str, out_stream: &mut impl Write) -> Result<(), LoxError> {
+        let (function, objs) = compile(source, out_stream)?;
         self.merge_obj_lists(objs);
 
         let value = Value::new_obj(Obj::Function(function, self.objects), &mut self.objects);
@@ -76,7 +77,7 @@ impl Vm {
         };
 
         self.call(self.stack[0].as_closure(), 0)?;
-        self.run()
+        self.run(out_stream)
     }
 
     fn merge_obj_lists(&mut self, objs: *mut Obj) {
@@ -94,7 +95,7 @@ impl Vm {
         }
     }
 
-    fn run(&mut self) -> Result<(), LoxError> {
+    fn run(&mut self, out_stream: &mut impl Write) -> Result<(), LoxError> {
         let mut frame: *mut CallFrame = &mut self.frames[self.frame_count - 1];
 
         macro_rules! value {
@@ -149,7 +150,7 @@ impl Vm {
         loop {
             #[cfg(feature = "debug_trace_execution")]
             unsafe {
-                eprint!("          ");
+                write!(out_stream, "          ").unwrap();
                 let end = self
                     .stack
                     .iter()
@@ -158,13 +159,15 @@ impl Vm {
                 self.stack[0..=end]
                     .iter()
                     .for_each(|v| eprint!("[ {:>3} ]", v));
-                eprint!("\n");
+                write!(out_stream, "\n").unwrap();
                 let ip = (*frame).ip;
                 let op = (*(*(*frame).closure).function).chunk.code[ip].into();
-                eprintln!(
+                write!(
+                    out_stream,
                     "{}",
                     (*(*(*frame).closure).function).chunk.debug_op(ip, &op).1
-                );
+                )
+                .unwrap();
             }
 
             match read_byte!().into() {
@@ -264,7 +267,7 @@ impl Vm {
                     _ => return self.runtime_error("Operand must be a number."),
                 },
                 OpPrint => {
-                    println!("{}", self.pop());
+                    writeln!(out_stream, "{}", self.pop()).unwrap();
                 }
                 OpJump => {
                     let offset = read_u16!();

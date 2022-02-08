@@ -1,0 +1,10 @@
+var i = true;
+if (i) {
+    /// true
+    print "true";
+}
+
+if (!(1 == 2)) {
+    /// false
+    print "false";
+}

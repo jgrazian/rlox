@@ -1,3 +1,5 @@
+use std::io::Write;
+
 use crate::chunk::{Chunk, OpCode};
 use crate::error::LoxError;
 use crate::object::{Function, Obj};
@@ -37,15 +39,17 @@ impl Precedence {
     }
 }
 
-pub fn compile(source: &str) -> Result<(Function, *mut Obj), LoxError> {
-    // let mut parser = Parser::new(source);
-    let function = Compiler::new(source).compile()?;
+pub fn compile(
+    source: &str,
+    out_stream: &mut impl Write,
+) -> Result<(Function, *mut Obj), LoxError> {
+    let function = Compiler::new(source, out_stream).compile()?;
     Ok(function)
 }
 
-struct ParseRule<'s> {
-    prefix: Option<fn(&mut Compiler<'s>, bool) -> Result<(), LoxError>>,
-    infix: Option<fn(&mut Compiler<'s>, bool) -> Result<(), LoxError>>,
+struct ParseRule<'s, T: Write> {
+    prefix: Option<fn(&mut Compiler<'s, T>, bool) -> Result<(), LoxError>>,
+    infix: Option<fn(&mut Compiler<'s, T>, bool) -> Result<(), LoxError>>,
     precedence: Precedence,
 }
 
@@ -70,9 +74,11 @@ pub enum FunctionType {
 
 pub const U8_COUNT: usize = 256;
 
-pub struct Compiler<'s> {
+pub struct Compiler<'s, T: Write> {
+    #[allow(unused)]
+    out_stream: Option<&'s mut T>,
     parser: Option<Parser<'s>>,
-    enclosing: Option<*mut Compiler<'s>>,
+    enclosing: Option<*mut Compiler<'s, T>>,
 
     function: Function,
     ty: FunctionType,
@@ -85,7 +91,7 @@ pub struct Compiler<'s> {
     scope_depth: usize,
 }
 
-impl<'s> Compiler<'s> {
+impl<'s, T: Write> Compiler<'s, T> {
     const LOCAL: Local<'s> = Local {
         name: Token {
             ty: TokenType::Eof,
@@ -96,8 +102,9 @@ impl<'s> Compiler<'s> {
         is_captured: false,
     };
 
-    pub fn new(source: &'s str) -> Self {
+    pub fn new(source: &'s str, out_stream: &'s mut T) -> Self {
         Self {
+            out_stream: Some(out_stream),
             parser: Some(Parser::new(source)),
             enclosing: None,
             function: Function::new(),
@@ -110,9 +117,10 @@ impl<'s> Compiler<'s> {
         }
     }
 
-    fn spawn(&mut self, ty: FunctionType) -> Compiler<'s> {
+    fn spawn(&mut self, ty: FunctionType) -> Compiler<'s, T> {
         let function = Function::named(self.parser().previous.lexeme);
         Self {
+            out_stream: None,
             parser: None,
             enclosing: Some(self),
             function,
@@ -132,6 +140,17 @@ impl<'s> Compiler<'s> {
             unsafe { (*enclosing).parser() }
         } else {
             panic!("No parser!")
+        }
+    }
+
+    #[allow(unused)]
+    fn out_stream(&mut self) -> &mut T {
+        if let Some(out_stream) = &mut self.out_stream {
+            out_stream
+        } else if let Some(enclosing) = self.enclosing {
+            unsafe { (*enclosing).out_stream() }
+        } else {
+            panic!("No out_stream!")
         }
     }
 
@@ -612,7 +631,8 @@ impl<'s> Compiler<'s> {
                 } else {
                     self.function.name.clone()
                 };
-                self.current_chunk().disassemble(&name);
+                let s = self.current_chunk().disassemble(&name);
+                write!(self.out_stream(), "{}", s).unwrap();
             }
         }
         (std::mem::take(&mut self.function), self.objects)
@@ -623,7 +643,7 @@ impl<'s> Compiler<'s> {
         self.emit_byte(OpCode::OpReturn);
     }
 
-    fn emit_byte<T: Into<u8>>(&mut self, byte: T) {
+    fn emit_byte<B: Into<u8>>(&mut self, byte: B) {
         let previous_line = self.parser().previous.line;
         self.current_chunk().push_byte(byte, previous_line);
     }
@@ -830,6 +850,7 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
+    #[allow(dead_code)]
     fn error_at_current(&mut self, message: &str) -> Option<LoxError> {
         let current = self.parser().current;
         self.error_at(current, message)
@@ -860,7 +881,7 @@ impl<'s> Compiler<'s> {
         })
     }
 
-    fn get_rule(ty: TokenType) -> ParseRule<'s> {
+    fn get_rule(ty: TokenType) -> ParseRule<'s, T> {
         match ty {
             TokenType::LeftParen => ParseRule {
                 prefix: Some(Self::grouping),
@@ -1015,6 +1036,7 @@ impl<'s> Parser<'s> {
         self.error_at(self.current, message)
     }
 
+    #[allow(dead_code)]
     fn error(&mut self, message: &str) -> Option<LoxError> {
         self.error_at(self.previous, message)
     }

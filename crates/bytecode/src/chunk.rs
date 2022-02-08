@@ -74,9 +74,10 @@ impl Chunk {
     }
 
     #[allow(dead_code)]
-    pub fn disassemble(&self, name: &str) {
-        println!("== {} ==", name);
-        print!("{:?}", self);
+    pub fn disassemble(&self, name: &str) -> String {
+        let mut s = format!("== {} ==\n", name);
+        s += &format!("{:?}", self);
+        s
     }
 }
 
