@@ -14,7 +14,7 @@ const STACK_MAX: usize = FRAME_MAX * U8_COUNT;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 struct CallFrame {
-    closure: *mut Closure,
+    closure: *mut Obj,
     ip: usize,
     slot_base: usize,
 }
@@ -34,7 +34,7 @@ pub struct Vm {
     frame_count: usize,
 
     objects: *mut Obj,
-    open_upvalues: *mut Upvalue,
+    open_upvalues: *mut Obj,
 
     stack: [Value; STACK_MAX],
     stack_top: usize,
@@ -42,7 +42,7 @@ pub struct Vm {
 }
 
 impl Vm {
-    pub fn new() -> Self {
+    pub fn new(out_stream: &mut impl Write) -> Self {
         const NIL: Value = Value::Nil;
 
         let mut vm = Self {
@@ -55,7 +55,7 @@ impl Vm {
             globals: HashMap::new(),
         };
 
-        vm.define_native("clock", clock_native);
+        vm.define_native("clock", clock_native, out_stream);
         vm
     }
 
@@ -63,20 +63,20 @@ impl Vm {
         let (function, objs) = compile(source, out_stream)?;
         self.merge_obj_lists(objs);
 
-        let value = Value::new_obj(Obj::Function(function, self.objects), &mut self.objects);
+        let value = self.new_obj(Obj::Function(function, self.objects, false), out_stream);
         self.push(value);
         let closure = Closure::new(self.stack[0].as_function());
         self.pop();
-        let value = Value::new_obj(Obj::Closure(closure, self.objects), &mut self.objects);
+        let value = self.new_obj(Obj::Closure(closure, self.objects, false), out_stream);
         self.push(value);
 
         self.frames[0] = CallFrame {
-            closure: self.stack[0].as_closure(),
+            closure: self.stack[0].as_obj(),
             ip: 0,
             slot_base: 0,
         };
 
-        self.call(self.stack[0].as_closure(), 0)?;
+        self.call(self.stack[0].as_obj(), 0)?;
         self.run(out_stream)
     }
 
@@ -109,7 +109,7 @@ impl Vm {
                 unsafe {
                     (*frame).ip += 1;
                     let i = (*frame).ip - 1;
-                    (*(*(*frame).closure).function).chunk.code[i]
+                    (*(*(*frame).closure).as_closure().function).chunk.code[i]
                 }
             };
         }
@@ -119,8 +119,8 @@ impl Vm {
                 unsafe {
                     (*frame).ip += 2;
                     let i = (*frame).ip;
-                    ((*(*(*frame).closure).function).chunk.code[i - 2] as u16) << 8
-                        | (*(*(*frame).closure).function).chunk.code[i - 1] as u16
+                    ((*(*(*frame).closure).as_closure().function).chunk.code[i - 2] as u16) << 8
+                        | (*(*(*frame).closure).as_closure().function).chunk.code[i - 1] as u16
                 }
             };
         }
@@ -128,7 +128,7 @@ impl Vm {
         macro_rules! read_constant {
             () => {{
                 let byte = read_byte!() as usize;
-                unsafe { (*(*(*frame).closure).function).chunk.constants[byte] }
+                unsafe { (*(*(*frame).closure).as_closure().function).chunk.constants[byte] }
             }};
         }
 
@@ -222,13 +222,19 @@ impl Vm {
                 OpGetUpvalue => {
                     let slot = read_byte!() as usize;
                     unsafe {
-                        self.push(*(*(*(*frame).closure).upvalues[slot]).location);
+                        self.push(
+                            *(*(*(*frame).closure).as_closure().upvalues[slot])
+                                .as_upvalue()
+                                .location,
+                        );
                     }
                 }
                 OpSetUpvalue => {
                     let slot = read_byte!() as usize;
                     unsafe {
-                        *(*(*(*frame).closure).upvalues[slot]).location = *self.peek(0);
+                        *(*(*(*frame).closure).as_closure_mut().upvalues[slot])
+                            .as_upvalue()
+                            .location = *self.peek(0);
                     }
                 }
                 OpEqual => {
@@ -242,7 +248,7 @@ impl Vm {
                     (b, a) if b.is_string() && a.is_string() => {
                         let (s1, s2) = self.pop2();
                         let s = s1.as_string().to_owned() + s2.as_string();
-                        let value = Value::new_obj(Obj::String(s, self.objects), &mut self.objects);
+                        let value = self.new_obj(Obj::String(s, self.objects, false), out_stream);
                         self.push(value)
                     }
                     (Value::Number(b), Value::Number(a)) => {
@@ -298,7 +304,7 @@ impl Vm {
                     let function: *const Function = read_constant!().as_function();
                     let closure = Closure::new(function);
                     let value =
-                        Value::new_obj(Obj::Closure(closure, self.objects), &mut self.objects);
+                        self.new_obj(Obj::Closure(closure, self.objects, false), out_stream);
                     self.push(value);
 
                     for i in 0..self.peek(0).as_closure().upvalues.len() {
@@ -307,11 +313,11 @@ impl Vm {
 
                         if is_local {
                             let value_ptr: *mut Value = &mut value!(index);
-                            let upvalue = self.capture_upvalue(value_ptr);
+                            let upvalue = self.capture_upvalue(value_ptr, out_stream);
                             self.peek(0).as_closure().upvalues[i] = upvalue;
                         } else {
                             self.peek(0).as_closure().upvalues[i] =
-                                unsafe { (*(*frame).closure).upvalues[index] }
+                                unsafe { (*(*frame).closure).as_closure().upvalues[index] }
                         }
                     }
                 }
@@ -367,22 +373,92 @@ impl Vm {
         &self.stack[self.stack_top - 1 - distance]
     }
 
-    fn capture_upvalue(&mut self, local: *mut Value) -> *mut Upvalue {
+    fn new_obj(&mut self, obj: Obj, out_stream: &mut impl Write) -> Value {
+        #[cfg(feature = "debug_stress_gc")]
+        {
+            self.collect_garbage();
+        }
+        Value::new_obj(obj, &mut self.objects)
+    }
+
+    fn collect_garbage(&mut self, out_stream: &mut impl Write) {
+        #[cfg(feature = "debug_log_gc")]
+        {
+            writeln!(out_stream, "-- gc begin");
+        }
+
+        self.mark_roots(out_stream);
+
+        #[cfg(feature = "debug_log_gc")]
+        {
+            writeln!(out_stream, "-- gc end");
+        }
+    }
+
+    fn mark_roots(&mut self, out_stream: &mut impl Write) {
+        // NOTE: Skip mark_compiler_roots function.
+        // We will only call GC in the VM
+        for value in &mut self.stack[0..self.stack_top] {
+            Self::mark_value(value, out_stream);
+        }
+
+        for frame in &self.frames[0..self.frame_count] {
+            Self::mark_object(frame.closure, out_stream);
+        }
+
+        let mut upvalue = self.open_upvalues;
+        while !upvalue.is_null() {
+            Self::mark_object(upvalue, out_stream);
+            unsafe {
+                upvalue = (*upvalue).as_upvalue().next;
+            }
+        }
+
+        self.mark_table(out_stream);
+    }
+
+    fn mark_table(&mut self, out_stream: &mut impl Write) {
+        for (name, value) in &mut self.globals {
+            Self::mark_value(value, out_stream);
+        }
+    }
+
+    fn mark_value(value: &Value, out_stream: &mut impl Write) {
+        match value {
+            Value::Obj(obj_ptr) => Self::mark_object(*obj_ptr, out_stream),
+            _ => {}
+        }
+    }
+
+    fn mark_object(obj: *mut Obj, out_stream: &mut impl Write) {
+        if obj.is_null() {
+            return;
+        }
+        #[cfg(feature = "debug_log_gc")]
+        {
+            writeln!(out_stream, "{} mark {}", obj, unsafe { *obj });
+        }
+        unsafe {
+            *(*obj).marked() = true;
+        }
+    }
+
+    fn capture_upvalue(&mut self, local: *mut Value, out_stream: &mut impl Write) -> *mut Obj {
         let mut prev_upvalue = ptr::null_mut();
         let mut upvalue = self.open_upvalues;
         unsafe {
-            while !upvalue.is_null() && (*upvalue).location > local {
+            while !upvalue.is_null() && (*upvalue).as_upvalue().location > local {
                 prev_upvalue = upvalue;
-                upvalue = (*upvalue).next;
+                upvalue = (*upvalue).as_upvalue().next;
             }
 
-            if !upvalue.is_null() && (*upvalue).location == local {
+            if !upvalue.is_null() && (*upvalue).as_upvalue().location == local {
                 return upvalue;
             }
         }
 
         // Have to wrap as obj to add to objects list
-        let value = Value::new_obj(
+        let value = self.new_obj(
             Obj::Upvalue(
                 Upvalue {
                     location: local as *mut Value,
@@ -390,16 +466,17 @@ impl Vm {
                     next: upvalue,
                 },
                 self.objects,
+                false,
             ),
-            &mut self.objects,
+            out_stream,
         );
-        let created_upvalue = value.as_upvalue();
+        let created_upvalue = value.as_obj();
 
         if prev_upvalue.is_null() {
             self.open_upvalues = created_upvalue;
         } else {
             unsafe {
-                (*prev_upvalue).next = created_upvalue;
+                (*prev_upvalue).as_upvalue_mut().next = created_upvalue;
             }
         }
         created_upvalue
@@ -407,11 +484,13 @@ impl Vm {
 
     fn close_upvalues(&mut self, last_ptr: *mut Value) {
         unsafe {
-            while !self.open_upvalues.is_null() && (*self.open_upvalues).location >= last_ptr {
+            while !self.open_upvalues.is_null()
+                && (*self.open_upvalues).as_upvalue().location >= last_ptr
+            {
                 let upvalue = self.open_upvalues;
-                (*upvalue).closed = *(*upvalue).location;
-                (*upvalue).location = &mut (*upvalue).closed;
-                self.open_upvalues = (*upvalue).next;
+                (*upvalue).as_upvalue_mut().closed = *(*upvalue).as_upvalue().location;
+                (*upvalue).as_upvalue_mut().location = &mut (*upvalue).as_upvalue_mut().closed;
+                self.open_upvalues = (*upvalue).as_upvalue().next;
             }
         }
     }
@@ -419,8 +498,8 @@ impl Vm {
     fn call_value(&mut self, callee: Value, arg_count: usize) -> Result<(), LoxError> {
         match callee {
             Value::Obj(o) => match unsafe { &mut *o } {
-                Obj::Closure(f, _) => self.call(f, arg_count),
-                Obj::Native(native, _) => {
+                Obj::Closure(..) => self.call(o, arg_count),
+                Obj::Native(native, ..) => {
                     let result = native(
                         arg_count,
                         &self.stack[self.stack_top - arg_count..self.stack_top],
@@ -435,11 +514,11 @@ impl Vm {
         }
     }
 
-    fn call(&mut self, closure: *mut Closure, arg_count: usize) -> Result<(), LoxError> {
-        if arg_count != unsafe { (*(*closure).function).arity } {
+    fn call(&mut self, closure: *mut Obj, arg_count: usize) -> Result<(), LoxError> {
+        if arg_count != unsafe { (*(*closure).as_closure().function).arity } {
             let msg = format!(
                 "Expected {} arguments but got {}.",
-                unsafe { (*(*closure).function).arity },
+                unsafe { (*(*closure).as_closure().function).arity },
                 arg_count
             );
             return self.runtime_error(msg);
@@ -459,13 +538,18 @@ impl Vm {
         Ok(())
     }
 
-    fn define_native(&mut self, name: &str, native: fn(usize, &[Value]) -> Value) {
-        let value = Value::new_obj(
-            Obj::String(name.to_string(), self.objects),
-            &mut self.objects,
+    fn define_native(
+        &mut self,
+        name: &str,
+        native: fn(usize, &[Value]) -> Value,
+        out_stream: &mut impl Write,
+    ) {
+        let value = self.new_obj(
+            Obj::String(name.to_string(), self.objects, false),
+            out_stream,
         );
         self.push(value);
-        let value = Value::new_obj(Obj::Native(native, self.objects), &mut self.objects);
+        let value = self.new_obj(Obj::Native(native, self.objects, false), out_stream);
         self.push(value);
 
         self.globals
@@ -479,7 +563,7 @@ impl Vm {
         let mut trace = String::new();
         for i in (0..=self.frame_count - 1).rev() {
             let frame = &self.frames[i];
-            let function = unsafe { &(*(*frame.closure).function) };
+            let function = unsafe { &(*(*frame.closure).as_closure().function) };
             let line = function.chunk.lines[frame.ip - 1];
 
             if function.name == "" {

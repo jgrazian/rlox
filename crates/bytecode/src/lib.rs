@@ -15,7 +15,7 @@ pub fn repl() -> Result<(), Box<dyn Error>> {
     let mut stdout = io::stdout();
     let reader = io::stdin();
     eprintln!("rlox\ntype 'quit' to exit");
-    let mut vm = vm::Vm::new();
+    let mut vm = vm::Vm::new(&mut stdout);
 
     let mut buffer = String::new();
     loop {
@@ -38,7 +38,7 @@ pub fn repl() -> Result<(), Box<dyn Error>> {
 
 pub fn run_file(path: &str, out_stream: &mut impl Write) -> Result<(), Box<dyn Error>> {
     let file = fs::read_to_string(path)?;
-    let result = vm::Vm::new().interpret(&file, out_stream);
+    let result = vm::Vm::new(out_stream).interpret(&file, out_stream);
 
     match result {
         Ok(_) => Ok(()),

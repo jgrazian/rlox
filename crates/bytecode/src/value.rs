@@ -15,7 +15,26 @@ impl Value {
         *obj.next() = *head;
         let alloc_obj = Box::into_raw(Box::new(obj));
         *head = alloc_obj;
+
+        #[cfg(feature = "debug_log_gc")]
+        {
+            writeln!(
+                out_stream,
+                "{} allocate {} for {}",
+                alloc_obj,
+                std::mem::size_of_val(&obj),
+                &obj
+            );
+        }
+
         Self::Obj(alloc_obj)
+    }
+
+    pub fn as_obj(&self) -> *mut Obj {
+        match self {
+            Self::Obj(p) => *p,
+            _ => panic!("Value is not a object"),
+        }
     }
 
     pub fn as_number(&self) -> f64 {
@@ -29,7 +48,7 @@ impl Value {
         match self {
             Self::Obj(o) => unsafe {
                 match &**o {
-                    Obj::String(s, _) => s,
+                    Obj::String(s, ..) => s,
                     _ => panic!("Obj is not a string"),
                 }
             },
@@ -41,7 +60,7 @@ impl Value {
         match self {
             Self::Obj(o) => unsafe {
                 match &**o {
-                    Obj::Function(f, _) => f,
+                    Obj::Function(f, ..) => f,
                     _ => panic!("Obj is not a function"),
                 }
             },
@@ -53,7 +72,7 @@ impl Value {
         match self {
             Self::Obj(o) => unsafe {
                 match &mut **o {
-                    Obj::Closure(c, _) => c,
+                    Obj::Closure(c, ..) => c,
                     _ => panic!("Obj is not a closure"),
                 }
             },
@@ -65,7 +84,7 @@ impl Value {
         match self {
             Self::Obj(o) => unsafe {
                 match &mut **o {
-                    Obj::Upvalue(u, _) => u,
+                    Obj::Upvalue(u, ..) => u,
                     _ => panic!("Obj is not a upvalue"),
                 }
             },

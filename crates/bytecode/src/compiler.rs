@@ -381,7 +381,7 @@ impl<'s, T: Write> Compiler<'s, T> {
         chars.next();
         chars.next_back();
         let value = Value::new_obj(
-            Obj::String(chars.collect(), self.objects),
+            Obj::String(chars.collect(), self.objects, false),
             &mut self.objects,
         );
         self.emit_constant(value)
@@ -503,7 +503,10 @@ impl<'s, T: Write> Compiler<'s, T> {
         self.objects = objs;
         let upvalue_count = function.upvalue_count;
 
-        let value = Value::new_obj(Obj::Function(function, self.objects), &mut self.objects);
+        let value = Value::new_obj(
+            Obj::Function(function, self.objects, false),
+            &mut self.objects,
+        );
         let constant = self.make_constant(value);
         self.emit_bytes(OpCode::OpClosure, constant);
 
@@ -596,7 +599,7 @@ impl<'s, T: Write> Compiler<'s, T> {
 
     fn identifier_constant(&mut self, name: Token) -> u8 {
         let value = Value::new_obj(
-            Obj::String(name.lexeme.to_string(), self.objects),
+            Obj::String(name.lexeme.to_string(), self.objects, false),
             &mut self.objects,
         );
         self.make_constant(value)
