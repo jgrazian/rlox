@@ -1,7 +1,7 @@
 use crate::chunk::OpCode;
 use crate::error::LoxError;
 use crate::heap::Heap;
-use crate::object::{Obj, ObjFunction};
+use crate::object::{FunctionType, Obj, ObjFunction};
 use crate::scanner::{Scanner, Token, TokenType};
 use crate::value::Value;
 
@@ -50,12 +50,6 @@ struct Local<'s> {
     depth: isize,
 }
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum FunctionType {
-    Function,
-    Script,
-}
-
 pub const U8_COUNT: usize = 256;
 
 pub struct Compiler<'s> {
@@ -75,7 +69,7 @@ pub struct Compiler<'s> {
 
 impl<'s> Compiler<'s> {
     pub fn new(source: &'s str, heap: &'s mut Heap<Obj>) -> Self {
-        Self {
+        let mut compiler = Self {
             had_error: false,
             panic_mode: false,
             scanner: Scanner::new(source),
@@ -83,9 +77,14 @@ impl<'s> Compiler<'s> {
             current: Token::default(),
             heap,
             functions: Vec::new(),
-            locals: Vec::with_capacity(16),
+            locals: Vec::with_capacity(32),
             scope_depth: 0,
-        }
+        };
+        compiler.locals.push(Local {
+            name: Token::default(),
+            depth: 0,
+        });
+        compiler
     }
 
     pub fn compile(&mut self) -> Result<ObjFunction, LoxError> {
@@ -145,6 +144,8 @@ impl<'s> Compiler<'s> {
             self.for_statement()
         } else if self.match_token(TokenType::If)? {
             self.if_statement()
+        } else if self.match_token(TokenType::Return)? {
+            self.return_statement()
         } else if self.match_token(TokenType::While)? {
             self.while_statement()
         } else if self.match_token(TokenType::LeftBrance)? {
@@ -255,6 +256,24 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
+    fn return_statement(&mut self) -> Result<(), LoxError> {
+        if self.compiling_function().ty == FunctionType::Script {
+            match self.error("Cannot return from top-level code.") {
+                Some(e) => return Err(e),
+                None => {}
+            }
+        }
+
+        if self.match_token(TokenType::Semicolon)? {
+            self.emit_return();
+        } else {
+            self.expression()?;
+            self.consume(TokenType::Semicolon, "Expect ';' after return value.")?;
+            self.emit_byte(OpCode::OpReturn);
+        }
+        Ok(())
+    }
+
     fn block(&mut self) -> Result<(), LoxError> {
         while !self.check_token(TokenType::RightBrace) && !self.check_token(TokenType::Eof) {
             self.declaration()?;
@@ -355,13 +374,14 @@ impl<'s> Compiler<'s> {
     fn fun_declaration(&mut self) -> Result<(), LoxError> {
         let global = self.parse_variable("Expect function name.")?;
         self.mark_initialized();
-        self.function(FunctionType::Function)?;
+        self.function()?;
         self.define_variable(global);
         Ok(())
     }
 
-    fn function(&mut self, ty: FunctionType) -> Result<(), LoxError> {
-        self.functions.push(ObjFunction::named(""));
+    fn function(&mut self) -> Result<(), LoxError> {
+        self.functions
+            .push(ObjFunction::named(self.previous.lexeme));
         self.begin_scope();
 
         self.consume(TokenType::LeftParen, "Expect '(' after function name.")?;
@@ -385,12 +405,19 @@ impl<'s> Compiler<'s> {
         self.consume(TokenType::RightParen, "Expect ')' after parameters.")?;
         self.consume(TokenType::LeftBrance, "Expect '{' before function body.")?;
         self.block()?;
+        self.end_scope();
 
         let function = self.end_compiler();
 
         let value = Value::Obj(Obj::alloc_function(&mut self.heap, function));
         let constant = self.make_constant(value);
         self.emit_bytes(OpCode::OpConstant, constant);
+        Ok(())
+    }
+
+    fn call(&mut self, _: bool) -> Result<(), LoxError> {
+        let arg_count = self.argument_list()?;
+        self.emit_bytes(OpCode::OpCall, arg_count as u8);
         Ok(())
     }
 
@@ -489,13 +516,18 @@ impl<'s> Compiler<'s> {
                     Some(n) => n.to_string(),
                     None => "script".to_string(),
                 };
-                self.compiling_function().chunk.disassemble(&name);
+                self.functions
+                    .last()
+                    .unwrap()
+                    .chunk
+                    .disassemble(&name, &self.heap);
             }
         }
         self.functions.pop().unwrap()
     }
 
     fn emit_return(&mut self) {
+        self.emit_byte(OpCode::OpNil);
         self.emit_byte(OpCode::OpReturn);
     }
 
@@ -667,8 +699,8 @@ impl<'s> Compiler<'s> {
         match ty {
             TokenType::LeftParen => ParseRule {
                 prefix: Some(Self::grouping),
-                infix: None,
-                precedence: Precedence::None,
+                infix: Some(Self::call),
+                precedence: Precedence::Call,
             },
             TokenType::Minus => ParseRule {
                 prefix: Some(Self::unary),

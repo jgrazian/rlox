@@ -1,5 +1,7 @@
 use std::fmt;
 
+use crate::heap::Heap;
+use crate::object::Obj;
 use crate::value::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -27,6 +29,7 @@ pub enum OpCode {
     OpJump,
     OpJumpIfFalse,
     OpLoop,
+    OpCall,
     OpReturn,
 }
 
@@ -38,7 +41,8 @@ impl OpCode {
             | Self::OpDefineGlobal
             | Self::OpSetGlobal
             | Self::OpGetLocal
-            | Self::OpSetLocal => 2,
+            | Self::OpSetLocal
+            | Self::OpCall => 2,
             Self::OpJump | Self::OpJumpIfFalse | Self::OpLoop => 3,
             _ => 1,
         }
@@ -57,7 +61,7 @@ impl From<OpCode> for u8 {
     }
 }
 
-#[derive(Default, Clone, PartialEq)]
+#[derive(Default, Debug, Clone, PartialEq)]
 pub struct Chunk {
     pub code: Vec<u8>,
     pub lines: Vec<usize>,
@@ -84,34 +88,27 @@ impl Chunk {
     }
 
     #[allow(dead_code)]
-    pub fn disassemble(&self, name: &str) {
-        eprintln!("== {} ==", name);
-        eprint!("{:?}", self);
-    }
-}
+    pub fn disassemble(&self, name: &str, heap: &Heap<Obj>) {
+        eprintln!("=== {} ===", name);
 
-impl fmt::Debug for Chunk {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut offset = 0;
         while offset < self.code.len() {
             let op = &self.code[offset].into();
-            let repr = self.debug_op(offset, op);
-            writeln!(f, "{}", repr)?;
+            let repr = self.debug_op(offset, op, heap);
+            eprintln!("{}", repr);
             offset += op.size();
         }
-
-        Ok(())
     }
 }
 
 impl Chunk {
-    pub fn debug_op(&self, offset: usize, op: &OpCode) -> String {
-        fn const_instr(chunk: &Chunk, name: &str, offset: usize) -> String {
+    pub fn debug_op(&self, offset: usize, op: &OpCode, heap: &Heap<Obj>) -> String {
+        fn const_instr(chunk: &Chunk, name: &str, offset: usize, heap: &Heap<Obj>) -> String {
             format!(
                 "{:<16} {:>4} '{}'",
                 name,
                 chunk.code[offset + 1],
-                chunk.constants[chunk.code[offset + 1] as usize]
+                chunk.constants[chunk.code[offset + 1] as usize].print(heap)
             )
         }
 
@@ -131,16 +128,16 @@ impl Chunk {
         }
 
         let repr = match op {
-            OpCode::OpConstant => const_instr(self, "OP_CONST", offset),
+            OpCode::OpConstant => const_instr(self, "OP_CONST", offset, heap),
             OpCode::OpNil => "OP_NIL".to_string(),
             OpCode::OpTrue => "OP_TRUE".to_string(),
             OpCode::OpFalse => "OP_FALSE".to_string(),
             OpCode::OpPop => "OP_POP".to_string(),
             OpCode::OpGetLocal => byte_instr(self, "OP_GET_LOCAL", offset),
             OpCode::OpSetLocal => byte_instr(self, "OP_SET_LOCAL", offset),
-            OpCode::OpGetGlobal => const_instr(self, "OP_GET_GLOBAL", offset),
-            OpCode::OpDefineGlobal => const_instr(self, "OP_DEFINE_GLOBAL", offset),
-            OpCode::OpSetGlobal => const_instr(self, "OP_SET_GLOBAL", offset),
+            OpCode::OpGetGlobal => const_instr(self, "OP_GET_GLOBAL", offset, heap),
+            OpCode::OpDefineGlobal => const_instr(self, "OP_DEFINE_GLOBAL", offset, heap),
+            OpCode::OpSetGlobal => const_instr(self, "OP_SET_GLOBAL", offset, heap),
             OpCode::OpEqual => "OP_EQUAL".to_string(),
             OpCode::OpGreater => "OP_GREATER".to_string(),
             OpCode::OpLess => "OP_LESS".to_string(),
@@ -154,6 +151,7 @@ impl Chunk {
             OpCode::OpJump => jump_instr(self, "OP_JUMP", offset, 1),
             OpCode::OpJumpIfFalse => jump_instr(self, "OP_JUMP_IF_FALSE", offset, 1),
             OpCode::OpLoop => jump_instr(self, "OP_LOOP", offset, -1),
+            OpCode::OpCall => byte_instr(self, "OP_CALL", offset),
             OpCode::OpReturn => "OP_RETURN".to_string(),
         };
 

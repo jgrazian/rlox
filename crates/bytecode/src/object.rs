@@ -5,13 +5,20 @@ use crate::heap::Heap;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjType {
+    Null,
     String(String),
     Function(ObjFunction),
 }
 
-#[derive(Debug, Clone, PartialEq)]
+impl Default for ObjType {
+    fn default() -> Self {
+        ObjType::Null
+    }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct Obj {
-    value: ObjType,
+    pub value: ObjType,
 }
 
 impl Obj {
@@ -62,7 +69,20 @@ impl fmt::Display for Obj {
                 },
                 f,
             ),
+            ObjType::Null => fmt::Display::fmt("Null", f),
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub enum FunctionType {
+    Function,
+    Script,
+}
+
+impl Default for FunctionType {
+    fn default() -> Self {
+        Self::Script
     }
 }
 
@@ -71,6 +91,7 @@ pub struct ObjFunction {
     pub arity: usize,
     pub chunk: Chunk,
     pub name: Option<String>,
+    pub ty: FunctionType,
 }
 
 impl ObjFunction {
@@ -79,6 +100,7 @@ impl ObjFunction {
             arity: 0,
             chunk: Chunk::new(),
             name: None,
+            ty: FunctionType::Script,
         }
     }
 
@@ -87,6 +109,7 @@ impl ObjFunction {
             arity: 0,
             chunk: Chunk::new(),
             name: Some(name.into()),
+            ty: FunctionType::Function,
         }
     }
 }

@@ -6,10 +6,11 @@ use crate::chunk::OpCode::{self, *};
 use crate::compiler::Compiler;
 use crate::error::LoxError;
 use crate::heap::Heap;
-use crate::object::{Obj, ObjFunction};
+use crate::object::{Obj, ObjFunction, ObjType};
 use crate::value::Value;
 
-const STACK_MAX: usize = 64;
+const FRAME_MAX: usize = 64;
+const STACK_MAX: usize = 64 * FRAME_MAX;
 
 #[derive(Debug)]
 struct CallFrame<'f> {
@@ -86,7 +87,7 @@ impl Vm {
     }
 
     fn run<S: Write>(&mut self, stream: &mut S) -> Result<(), LoxError> {
-        let mut frame = CallFrame {
+        let mut frames = vec![CallFrame {
             function: self
                 .heap
                 .get(self.stack[0].get().as_obj())
@@ -94,9 +95,10 @@ impl Vm {
                 .as_function()
                 .clone(),
             ip: 0,
-            slot_top: 0,
-            slots: &self.stack[1..],
-        };
+            slot_top: 1,
+            slots: &self.stack[0..],
+        }];
+        let mut frame = frames.last_mut().unwrap();
 
         loop {
             #[cfg(feature = "debug_trace_execution")]
@@ -113,7 +115,7 @@ impl Vm {
                 eprint!("\n");
                 let ip = frame.ip;
                 let op = frame.function.chunk.code[ip].into();
-                eprintln!("{}", frame.function.chunk.debug_op(ip, &op));
+                eprintln!("{}", frame.function.chunk.debug_op(ip, &op, &self.heap));
             }
 
             match frame.read_byte().into() {
@@ -143,7 +145,7 @@ impl Vm {
                         }
                         None => {
                             let msg = format!("Undefined variable '{}'.", name);
-                            return Self::runtime_error(msg, &mut frame);
+                            return Self::runtime_error(msg, &frame);
                         }
                     }
                 }
@@ -159,7 +161,7 @@ impl Vm {
                         Some(v) => *v = _v,
                         None => {
                             let msg = format!("Undefined variable '{}'.", name);
-                            return Self::runtime_error(msg, &mut frame);
+                            return Self::runtime_error(msg, &frame);
                         }
                     }
                 }
@@ -191,7 +193,7 @@ impl Vm {
                     _ => {
                         return Self::runtime_error(
                             "Operands must be two numbers or two strings.",
-                            &mut frame,
+                            &frame,
                         )
                     }
                 },
@@ -207,7 +209,7 @@ impl Vm {
                         let v = Value::Number(-frame.pop().as_number());
                         frame.push(v)
                     }
-                    _ => return Self::runtime_error("Operand must be a number.", &mut frame),
+                    _ => return Self::runtime_error("Operand must be a number.", &frame),
                 },
                 OpPrint => {
                     writeln!(stream, "{}", frame.pop().print(&self.heap))
@@ -227,16 +229,76 @@ impl Vm {
                     let offset = frame.read_u16();
                     frame.ip -= offset as usize;
                 }
-                OpReturn => break,
+                OpCall => {
+                    let arg_count = frame.read_byte() as usize;
+                    self.call_value(frame.peek(arg_count), arg_count, &mut frames)?;
+                    frame = frames.last_mut().unwrap();
+                }
+                OpReturn => {
+                    let result = frame.pop();
+                    frames.pop();
+                    if frames.is_empty() {
+                        return Ok(());
+                    }
+                    frame = frames.last_mut().unwrap();
+                    frame.push(result);
+                }
             }
         }
-        // self.reset_stack();
         Ok(())
     }
 
-    // fn reset_stack(&mut self) {
-    //     self.stack.fill(Cell::new(Value::Nil));
-    // }
+    fn call_value(
+        &self,
+        callee: Value,
+        arg_count: usize,
+        frames: &mut Vec<CallFrame<'_>>,
+    ) -> Result<(), LoxError> {
+        match callee {
+            Value::Obj(o) => match &self.heap[o].value {
+                ObjType::Function(f) => {
+                    self.call(f, arg_count, frames)?;
+                    return Ok(());
+                }
+                _ => (),
+            },
+            _ => (),
+        };
+        let frame = frames.last().unwrap();
+        Self::runtime_error("Can only call functions and classes.", frame)
+    }
+
+    fn call(
+        &self,
+        function: &ObjFunction,
+        arg_count: usize,
+        frames: &mut Vec<CallFrame<'_>>,
+    ) -> Result<(), LoxError> {
+        if arg_count != function.arity {
+            let msg = format!(
+                "Expected {} arguments but got {}.",
+                function.arity, arg_count
+            );
+            return Self::runtime_error(msg, frames.last().unwrap());
+        }
+
+        if frames.len() == FRAME_MAX {
+            return Self::runtime_error("stack overflow", frames.last().unwrap());
+        }
+
+        let prev = frames.last_mut().unwrap();
+        let frame = CallFrame {
+            function: function.clone(),
+            ip: 0,
+            slot_top: arg_count + 1,
+            slots: &prev.slots[prev.slot_top - arg_count - 1..],
+        };
+        prev.slot_top = prev.slot_top - arg_count - 1;
+
+        frames.push(frame);
+
+        Ok(())
+    }
 
     fn runtime_error<M: Into<String>>(message: M, frame: &CallFrame<'_>) -> Result<(), LoxError> {
         let instr = frame.ip - 1;
