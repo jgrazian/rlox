@@ -10,11 +10,6 @@ pub enum LoxError {
         location: String,
         line: usize,
     },
-    ParseError {
-        message: String,
-        location: String,
-        line: usize,
-    },
 }
 impl Error for LoxError {}
 
@@ -28,11 +23,6 @@ impl Display for LoxError {
                 location,
                 line,
             } => write!(f, "[line {}] CompileError{}: {}", line, location, message),
-            LoxError::ParseError {
-                message,
-                location,
-                line,
-            } => write!(f, "[line {}] ParseError{}: {}", line, location, message),
         }
     }
 }

@@ -7,6 +7,7 @@ use std::process;
 mod chunk;
 mod compiler;
 mod error;
+mod heap;
 mod object;
 mod scanner;
 mod value;
@@ -26,10 +27,10 @@ pub fn repl() -> Result<(), Box<dyn Error>> {
             break;
         }
 
-        match vm.interpret(&buffer) {
-            Err(e) => eprintln!("{}", e),
-            Ok(()) => (),
-        }
+        // match vm.interpret(&buffer) {
+        //     Err(e) => eprintln!("{}", e),
+        //     Ok(()) => (),
+        // }
     }
     Ok(())
 }

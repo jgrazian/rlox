@@ -1,109 +1,9 @@
-use crate::chunk::{Chunk, OpCode};
+use crate::chunk::OpCode;
 use crate::error::LoxError;
-use crate::object::{Function, Obj};
+use crate::heap::Heap;
+use crate::object::{Obj, ObjFunction};
 use crate::scanner::{Scanner, Token, TokenType};
-use crate::value::Value;
-
-#[derive(Debug, Clone)]
-pub struct Parser<'s> {
-    scanner: Scanner<'s>,
-    current: Token<'s>,
-    previous: Token<'s>,
-    had_error: bool,
-    panic_mode: bool,
-}
-
-impl<'s> Parser<'s> {
-    fn new(source: &'s str) -> Self {
-        Self {
-            scanner: Scanner::new(source),
-            current: Token {
-                ty: TokenType::Eof,
-                lexeme: "",
-                line: 0,
-            },
-            previous: Token {
-                ty: TokenType::Eof,
-                lexeme: "",
-                line: 0,
-            },
-            had_error: false,
-            panic_mode: false,
-        }
-    }
-
-    fn advance(&mut self) -> Result<(), LoxError> {
-        self.previous = self.current;
-
-        let mut result = Ok(());
-        loop {
-            self.current = self.scanner.scan_token();
-            match self.current.ty {
-                TokenType::Error => match self.error_at_current(self.current.lexeme) {
-                    Some(e) => result = Err(e),
-                    None => {}
-                },
-                _ => break,
-            }
-        }
-
-        result
-    }
-
-    fn check_token(&self, ty: TokenType) -> bool {
-        self.current.ty == ty
-    }
-
-    fn consume(&mut self, ty: TokenType, message: &str) -> Result<(), LoxError> {
-        if self.check_token(ty) {
-            return self.advance();
-        }
-
-        match self.error_at_current(message) {
-            Some(e) => Err(e),
-            None => Ok(()),
-        }
-    }
-
-    fn match_token(&mut self, ty: TokenType) -> Result<bool, LoxError> {
-        match self.check_token(ty) {
-            false => Ok(false),
-            true => {
-                self.advance()?;
-                Ok(true)
-            }
-        }
-    }
-
-    // Errors
-    fn error_at_current(&mut self, message: &str) -> Option<LoxError> {
-        self.error_at(self.current, message)
-    }
-
-    fn error(&mut self, message: &str) -> Option<LoxError> {
-        self.error_at(self.previous, message)
-    }
-
-    fn error_at(&mut self, token: Token<'s>, message: &str) -> Option<LoxError> {
-        if self.panic_mode {
-            return None;
-        }
-        self.panic_mode = true;
-
-        let location = match token.ty {
-            TokenType::Eof => " at end".to_string(),
-            TokenType::Error => "".to_string(),
-            _ => format!(" at '{}'", token.lexeme),
-        };
-
-        self.had_error = true;
-        Some(LoxError::ParseError {
-            message: message.to_string(),
-            location,
-            line: token.line,
-        })
-    }
-}
+use crate::value::{self, Value};
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 enum Precedence {
@@ -138,19 +38,13 @@ impl Precedence {
     }
 }
 
-pub fn compile(source: &str) -> Result<Function, LoxError> {
-    let mut parser = Parser::new(source);
-    let function = Compiler::new(&mut parser, FunctionType::Script).compile()?;
-    Ok(function)
-}
-
-struct ParseRule<'s, 't> {
-    prefix: Option<fn(&mut Compiler<'s, 't>, bool) -> Result<(), LoxError>>,
-    infix: Option<fn(&mut Compiler<'s, 't>, bool) -> Result<(), LoxError>>,
+struct ParseRule<'s> {
+    prefix: Option<fn(&mut Compiler<'s>, bool) -> Result<(), LoxError>>,
+    infix: Option<fn(&mut Compiler<'s>, bool) -> Result<(), LoxError>>,
     precedence: Precedence,
 }
 
-#[derive(Debug, Clone, Copy)]
+#[derive(Debug, Default, Clone, Copy)]
 struct Local<'s> {
     name: Token<'s>,
     depth: isize,
@@ -164,91 +58,75 @@ pub enum FunctionType {
 
 pub const U8_COUNT: usize = 256;
 
-pub struct Compiler<'s, 't> {
-    parser: &'t mut Parser<'s>,
-    function: Function,
-    ty: FunctionType,
+pub struct Compiler<'s> {
+    had_error: bool,
+    panic_mode: bool,
 
-    locals: [Local<'s>; U8_COUNT],
-    local_count: usize,
+    scanner: Scanner<'s>,
+    previous: Token<'s>,
+    current: Token<'s>,
+
+    heap: &'s mut Heap<Obj>,
+
+    functions: Vec<ObjFunction>,
+    locals: Vec<Local<'s>>,
     scope_depth: usize,
 }
 
-impl<'s, 't> Compiler<'s, 't> {
-    pub fn new(parser: &'t mut Parser<'s>, ty: FunctionType) -> Self {
-        const LOCAL: Local = Local {
-            name: Token {
-                ty: TokenType::Eof,
-                lexeme: "",
-                line: 0,
-            },
-            depth: 0,
-        };
-
-        let function = if ty != FunctionType::Script {
-            Function::named(parser.previous.lexeme)
-        } else {
-            Function::new()
-        };
-
+impl<'s> Compiler<'s> {
+    pub fn new(source: &'s str, heap: &'s mut Heap<Obj>) -> Self {
         Self {
-            parser,
-            function,
-            ty,
-            locals: [LOCAL; U8_COUNT],
-            local_count: 1, // Function is always the 0th local
+            had_error: false,
+            panic_mode: false,
+            scanner: Scanner::new(source),
+            previous: Token::default(),
+            current: Token::default(),
+            heap,
+            functions: Vec::new(),
+            locals: vec![Local::default(); 16],
             scope_depth: 0,
         }
     }
 
-    fn parser(&mut self) -> &mut Parser<'s> {
-        self.parser
-    }
+    pub fn compile(&mut self) -> Result<ObjFunction, LoxError> {
+        self.functions.push(ObjFunction::new("main"));
+        self.advance()?;
 
-    pub fn compile(&mut self) -> Result<Function, LoxError> {
-        self.parser().advance()?;
-        while !self.parser().match_token(TokenType::Eof)? {
+        while !self.match_token(TokenType::Eof)? {
             self.declaration()?;
         }
+
         Ok(self.end_compiler())
     }
 
-    fn current_chunk(&mut self) -> &mut Chunk {
-        &mut self.function.chunk
+    fn compiling_function(&mut self) -> &mut ObjFunction {
+        self.functions.last_mut().unwrap()
     }
 
     fn declaration(&mut self) -> Result<(), LoxError> {
-        if self.parser().match_token(TokenType::Fun)? {
+        if self.match_token(TokenType::Fun)? {
             self.fun_declaration()?;
-        } else if self.parser().match_token(TokenType::Var)? {
+        } else if self.match_token(TokenType::Var)? {
             self.var_declaration()?;
         } else {
             self.statement()?;
         }
 
-        if self.parser().panic_mode {
+        if self.panic_mode {
             self.synchronize()?;
         }
-        Ok(())
-    }
-
-    fn fun_declaration(&mut self) -> Result<(), LoxError> {
-        let global = self.parse_variable("Expect function name.")?;
-        self.mark_initialized();
-        self.function(FunctionType::Function)?;
-        self.define_variable(global);
         Ok(())
     }
 
     fn var_declaration(&mut self) -> Result<(), LoxError> {
         let global = self.parse_variable("Expected variable name.")?;
 
-        if self.parser().match_token(TokenType::Equal)? {
+        if self.match_token(TokenType::Equal)? {
             self.expression()?;
         } else {
             self.emit_byte(OpCode::OpNil);
         }
-        self.parser().consume(
+        self.consume(
             TokenType::Semicolon,
             "Expect ';' after variable declaration.",
         )?;
@@ -261,15 +139,15 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn statement(&mut self) -> Result<(), LoxError> {
-        if self.parser().match_token(TokenType::Print)? {
+        if self.match_token(TokenType::Print)? {
             self.print_statement()
-        } else if self.parser().match_token(TokenType::For)? {
+        } else if self.match_token(TokenType::For)? {
             self.for_statement()
-        } else if self.parser().match_token(TokenType::If)? {
+        } else if self.match_token(TokenType::If)? {
             self.if_statement()
-        } else if self.parser().match_token(TokenType::While)? {
+        } else if self.match_token(TokenType::While)? {
             self.while_statement()
-        } else if self.parser().match_token(TokenType::LeftBrance)? {
+        } else if self.match_token(TokenType::LeftBrance)? {
             self.begin_scope();
             self.block()?;
             self.end_scope();
@@ -280,11 +158,9 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn if_statement(&mut self) -> Result<(), LoxError> {
-        self.parser()
-            .consume(TokenType::LeftParen, "Expect '(' after 'if'.")?;
+        self.consume(TokenType::LeftParen, "Expect '(' after 'if'.")?;
         self.expression()?;
-        self.parser()
-            .consume(TokenType::RightParen, "Expect ')' after condition.")?;
+        self.consume(TokenType::RightParen, "Expect ')' after condition.")?;
 
         let then_jump = self.emit_jump(OpCode::OpJumpIfFalse);
         self.emit_byte(OpCode::OpPop);
@@ -295,7 +171,7 @@ impl<'s, 't> Compiler<'s, 't> {
         self.patch_jump(then_jump);
         self.emit_byte(OpCode::OpPop);
 
-        if self.parser().match_token(TokenType::Else)? {
+        if self.match_token(TokenType::Else)? {
             self.statement()?;
         }
         self.patch_jump(else_jump);
@@ -305,19 +181,16 @@ impl<'s, 't> Compiler<'s, 't> {
 
     fn print_statement(&mut self) -> Result<(), LoxError> {
         self.expression()?;
-        self.parser()
-            .consume(TokenType::Semicolon, "Expect ';' after value.")?;
+        self.consume(TokenType::Semicolon, "Expect ';' after value.")?;
         self.emit_byte(OpCode::OpPrint);
         Ok(())
     }
 
     fn while_statement(&mut self) -> Result<(), LoxError> {
-        let loop_start = self.current_chunk().code.len();
-        self.parser()
-            .consume(TokenType::LeftParen, "Expect '(' after 'while'.")?;
+        let loop_start = self.compiling_function().chunk.code.len();
+        self.consume(TokenType::LeftParen, "Expect '(' after 'while'.")?;
         self.expression()?;
-        self.parser()
-            .consume(TokenType::RightParen, "Expect ')' after condition.")?;
+        self.consume(TokenType::RightParen, "Expect ')' after condition.")?;
 
         let exit_jump = self.emit_jump(OpCode::OpJumpIfFalse);
         self.emit_byte(OpCode::OpPop);
@@ -332,34 +205,31 @@ impl<'s, 't> Compiler<'s, 't> {
     fn for_statement(&mut self) -> Result<(), LoxError> {
         self.begin_scope();
 
-        self.parser()
-            .consume(TokenType::LeftParen, "Expect '(' after 'while'.")?;
-        if self.parser().match_token(TokenType::Semicolon)? {
+        self.consume(TokenType::LeftParen, "Expect '(' after 'while'.")?;
+        if self.match_token(TokenType::Semicolon)? {
             // No initializer.
-        } else if self.parser().match_token(TokenType::Var)? {
+        } else if self.match_token(TokenType::Var)? {
             self.var_declaration()?;
         } else {
             self.expression_statement()?;
         }
 
-        let mut loop_start = self.current_chunk().code.len();
+        let mut loop_start = self.compiling_function().chunk.code.len();
         let mut exit_jump = None;
-        if !self.parser().match_token(TokenType::Semicolon)? {
+        if !self.match_token(TokenType::Semicolon)? {
             self.expression()?;
-            self.parser()
-                .consume(TokenType::Semicolon, "Expect ';' after loop condition.")?;
+            self.consume(TokenType::Semicolon, "Expect ';' after loop condition.")?;
 
             exit_jump = Some(self.emit_jump(OpCode::OpJumpIfFalse));
             self.emit_byte(OpCode::OpPop);
         }
 
-        if !self.parser().match_token(TokenType::RightParen)? {
+        if !self.match_token(TokenType::RightParen)? {
             let body_jump = self.emit_jump(OpCode::OpJump);
-            let increment_start = self.current_chunk().code.len();
+            let increment_start = self.compiling_function().chunk.code.len();
             self.expression()?;
             self.emit_byte(OpCode::OpPop);
-            self.parser()
-                .consume(TokenType::RightParen, "Expect ')' after for clauses.")?;
+            self.consume(TokenType::RightParen, "Expect ')' after for clauses.")?;
 
             self.emit_loop(loop_start);
             loop_start = increment_start;
@@ -380,24 +250,20 @@ impl<'s, 't> Compiler<'s, 't> {
 
     fn expression_statement(&mut self) -> Result<(), LoxError> {
         self.expression()?;
-        self.parser()
-            .consume(TokenType::Semicolon, "Expect ';' after expression.")?;
+        self.consume(TokenType::Semicolon, "Expect ';' after expression.")?;
         self.emit_byte(OpCode::OpPop);
         Ok(())
     }
 
     fn block(&mut self) -> Result<(), LoxError> {
-        while !self.parser().check_token(TokenType::RightBrace)
-            && !self.parser().check_token(TokenType::Eof)
-        {
+        while !self.check_token(TokenType::RightBrace) && !self.check_token(TokenType::Eof) {
             self.declaration()?;
         }
-        self.parser()
-            .consume(TokenType::RightBrace, "Expect '}' after block.")
+        self.consume(TokenType::RightBrace, "Expect '}' after block.")
     }
 
     fn number(&mut self, _: bool) -> Result<(), LoxError> {
-        let value = match self.parser().previous.lexeme.parse::<f64>() {
+        let value = match self.previous.lexeme.parse::<f64>() {
             Ok(value) => value,
             Err(_) => {
                 return Err(self.error("Parse failure.").into());
@@ -407,14 +273,15 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn string(&mut self, _: bool) -> Result<(), LoxError> {
-        let mut chars = self.parser().previous.lexeme.chars();
+        let mut chars = self.previous.lexeme.chars();
         chars.next();
         chars.next_back();
-        self.emit_constant(Value::Obj(Box::new(Obj::String(chars.collect()))))
+        let value = Value::Obj(Obj::alloc_string(&mut self.heap, chars.collect::<String>()));
+        self.emit_constant(value)
     }
 
     fn variable(&mut self, can_assign: bool) -> Result<(), LoxError> {
-        let previous = self.parser().previous;
+        let previous = self.previous;
         self.named_variable(previous, can_assign)?;
         Ok(())
     }
@@ -429,7 +296,7 @@ impl<'s, 't> Compiler<'s, 't> {
             _ => (OpCode::OpGetLocal, OpCode::OpSetLocal),
         };
 
-        if can_assign && self.parser().match_token(TokenType::Equal)? {
+        if can_assign && self.match_token(TokenType::Equal)? {
             self.expression()?;
             self.emit_bytes(set_op, arg as u8);
         } else {
@@ -440,12 +307,11 @@ impl<'s, 't> Compiler<'s, 't> {
 
     fn grouping(&mut self, _: bool) -> Result<(), LoxError> {
         self.expression()?;
-        self.parser()
-            .consume(TokenType::RightParen, "Expect ')' after expression.")
+        self.consume(TokenType::RightParen, "Expect ')' after expression.")
     }
 
     fn unary(&mut self, _: bool) -> Result<(), LoxError> {
-        let operator_type = self.parser().previous.ty;
+        let operator_type = self.previous.ty;
         self.parse_precedence(Precedence::Unary)?;
         match operator_type {
             TokenType::Bang => self.emit_byte(OpCode::OpNot),
@@ -456,7 +322,7 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn binary(&mut self, _: bool) -> Result<(), LoxError> {
-        let operator_type = self.parser().previous.ty;
+        let operator_type = self.previous.ty;
         let rule = Self::get_rule(operator_type);
         self.parse_precedence(rule.precedence.bump())?;
 
@@ -477,7 +343,7 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn literal(&mut self, _: bool) -> Result<(), LoxError> {
-        match self.parser().previous.ty {
+        match self.previous.ty {
             TokenType::False => self.emit_byte(OpCode::OpFalse),
             TokenType::Nil => self.emit_byte(OpCode::OpNil),
             TokenType::True => self.emit_byte(OpCode::OpTrue),
@@ -486,48 +352,51 @@ impl<'s, 't> Compiler<'s, 't> {
         Ok(())
     }
 
+    fn fun_declaration(&mut self) -> Result<(), LoxError> {
+        let global = self.parse_variable("Expect function name.")?;
+        self.mark_initialized();
+        self.function(FunctionType::Function)?;
+        self.define_variable(global);
+        Ok(())
+    }
+
     fn function(&mut self, ty: FunctionType) -> Result<(), LoxError> {
-        let mut compiler = Compiler::new(self.parser, ty);
-        compiler.begin_scope();
+        self.functions.push(ObjFunction::new(""));
+        self.begin_scope();
 
-        compiler
-            .parser()
-            .consume(TokenType::LeftParen, "Expect '(' after function name.")?;
+        self.consume(TokenType::LeftParen, "Expect '(' after function name.")?;
 
-        if !compiler.parser().check_token(TokenType::RightParen) {
+        if !self.check_token(TokenType::RightParen) {
             loop {
-                compiler.function.arity += 1;
-                if compiler.function.arity > 255 {
-                    return Err(compiler.error("Cannot have more than 255 parameters."))?;
+                self.compiling_function().arity += 1;
+                if self.compiling_function().arity > 255 {
+                    return Err(self.error("Cannot have more than 255 parameters."))?;
                 }
 
-                let constant = compiler.parse_variable("Expect parameter name.")?;
-                compiler.define_variable(constant);
+                let constant = self.parse_variable("Expect parameter name.")?;
+                self.define_variable(constant);
 
-                if !compiler.parser().match_token(TokenType::Comma)? {
+                if !self.match_token(TokenType::Comma)? {
                     break;
                 }
             }
         }
 
-        compiler
-            .parser()
-            .consume(TokenType::RightParen, "Expect ')' after parameters.")?;
-        compiler
-            .parser()
-            .consume(TokenType::LeftBrance, "Expect '{' before function body.")?;
-        compiler.block()?;
+        self.consume(TokenType::RightParen, "Expect ')' after parameters.")?;
+        self.consume(TokenType::LeftBrance, "Expect '{' before function body.")?;
+        self.block()?;
 
-        let function = compiler.end_compiler();
+        let function = self.end_compiler();
 
-        let constant = self.make_constant(Value::Obj(Box::new(Obj::Function(function))));
+        let value = Value::Obj(Obj::alloc_function(&mut self.heap, function));
+        let constant = self.make_constant(value);
         self.emit_bytes(OpCode::OpConstant, constant);
         Ok(())
     }
 
     fn argument_list(&mut self) -> Result<u8, LoxError> {
         let mut arg_count = 0;
-        if !self.parser().check_token(TokenType::RightParen) {
+        if !self.check_token(TokenType::RightParen) {
             loop {
                 self.expression()?;
                 if arg_count == 255 {
@@ -538,21 +407,20 @@ impl<'s, 't> Compiler<'s, 't> {
                 }
                 arg_count += 1;
 
-                if !self.parser().match_token(TokenType::Comma)? {
+                if !self.match_token(TokenType::Comma)? {
                     break;
                 }
             }
         }
-        self.parser()
-            .consume(TokenType::RightParen, "Expect ')' after arguments.")?;
+        self.consume(TokenType::RightParen, "Expect ')' after arguments.")?;
         Ok(arg_count)
     }
 
     fn parse_precedence(&mut self, precedence: Precedence) -> Result<(), LoxError> {
-        self.parser().advance()?;
+        self.advance()?;
         let can_assign;
 
-        match Self::get_rule(self.parser().previous.ty).prefix {
+        match Self::get_rule(self.previous.ty).prefix {
             Some(prefix_rule) => {
                 can_assign = precedence <= Precedence::Assignment;
                 prefix_rule(self, can_assign)?;
@@ -562,15 +430,15 @@ impl<'s, 't> Compiler<'s, 't> {
             }
         };
 
-        while precedence <= Self::get_rule(self.parser().current.ty).precedence {
-            self.parser().advance()?;
-            match Self::get_rule(self.parser().previous.ty).infix {
+        while precedence <= Self::get_rule(self.current.ty).precedence {
+            self.advance()?;
+            match Self::get_rule(self.previous.ty).infix {
                 Some(infix_rule) => infix_rule(self, can_assign)?,
                 None => {}
             }
         }
 
-        if can_assign && self.parser().match_token(TokenType::Equal)? {
+        if can_assign && self.match_token(TokenType::Equal)? {
             match self.error("Invalid assignment target.") {
                 Some(e) => return Err(e),
                 None => {}
@@ -581,20 +449,20 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn parse_variable(&mut self, error_message: &str) -> Result<u8, LoxError> {
-        self.parser()
-            .consume(TokenType::Identifier, error_message)?;
+        self.consume(TokenType::Identifier, error_message)?;
 
         self.declare_variable()?;
         if self.scope_depth > 0 {
             return Ok(0);
         }
 
-        let previous = self.parser().previous;
+        let previous = self.previous;
         Ok(self.identifier_constant(previous))
     }
 
     fn identifier_constant(&mut self, name: Token) -> u8 {
-        self.make_constant(Value::Obj(Box::new(Obj::String(name.lexeme.to_string()))))
+        let value = Value::Obj(Obj::alloc_string(&mut self.heap, name.lexeme.clone()));
+        self.make_constant(value)
     }
 
     fn begin_scope(&mut self) {
@@ -604,19 +472,19 @@ impl<'s, 't> Compiler<'s, 't> {
     fn end_scope(&mut self) {
         self.scope_depth -= 1;
 
-        while self.local_count > 0
-            && self.locals[self.local_count - 1].depth > self.scope_depth as isize
+        while self.locals.len() > 0
+            && self.locals[self.locals.len() - 1].depth > self.scope_depth as isize
         {
             self.emit_byte(OpCode::OpPop);
-            self.local_count -= 1;
+            self.locals.pop();
         }
     }
 
-    fn end_compiler(&mut self) -> Function {
+    fn end_compiler(&mut self) -> ObjFunction {
         self.emit_return();
         #[cfg(feature = "debug_print_code")]
         {
-            if !self.parser().had_error {
+            if !self.had_error {
                 let name = if self.function.name.is_empty() {
                     "script".to_string()
                 } else {
@@ -625,7 +493,7 @@ impl<'s, 't> Compiler<'s, 't> {
                 self.current_chunk().disassemble(&name);
             }
         }
-        std::mem::take(&mut self.function)
+        self.functions.pop().unwrap()
     }
 
     fn emit_return(&mut self) {
@@ -633,8 +501,10 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn emit_byte<T: Into<u8>>(&mut self, byte: T) {
-        let previous_line = self.parser().previous.line;
-        self.current_chunk().push_byte(byte, previous_line);
+        let previous_line = self.previous.line;
+        self.compiling_function()
+            .chunk
+            .push_byte(byte, previous_line);
     }
 
     fn emit_bytes<U: Into<u8>, V: Into<u8>>(&mut self, byte1: U, byte2: V) {
@@ -649,31 +519,31 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn make_constant(&mut self, value: Value) -> u8 {
-        self.current_chunk().push_constant(value)
+        self.compiling_function().chunk.push_constant(value)
     }
 
     fn emit_jump(&mut self, instruction: OpCode) -> usize {
         self.emit_byte(instruction);
         self.emit_byte(0xff);
         self.emit_byte(0xff);
-        self.current_chunk().code.len() - 2
+        self.compiling_function().chunk.code.len() - 2
     }
 
     fn patch_jump(&mut self, offset: usize) {
-        let jump = self.current_chunk().code.len() - offset - 2;
+        let jump = self.compiling_function().chunk.code.len() - offset - 2;
 
         if jump > u16::max_value() as usize {
             self.error("Too much code to jump over.");
         }
 
-        self.current_chunk().code[offset] = ((jump >> 8) & 0xff) as u8;
-        self.current_chunk().code[offset + 1] = (jump & 0xff) as u8;
+        self.compiling_function().chunk.code[offset] = ((jump >> 8) & 0xff) as u8;
+        self.compiling_function().chunk.code[offset + 1] = (jump & 0xff) as u8;
     }
 
     fn emit_loop(&mut self, loop_start: usize) {
         self.emit_byte(OpCode::OpLoop);
 
-        let offset = self.current_chunk().code.len() - loop_start + 2;
+        let offset = self.compiling_function().chunk.code.len() - loop_start + 2;
         if offset > u16::max_value() as usize {
             self.error("Loop body too large.");
         }
@@ -683,20 +553,19 @@ impl<'s, 't> Compiler<'s, 't> {
     }
 
     fn add_local(&mut self, name: Token<'s>) -> Result<(), LoxError> {
-        if self.local_count == U8_COUNT {
+        if self.locals.len() >= U8_COUNT {
             match self.error("Too many local variables in function.") {
                 Some(e) => return Err(e),
                 None => {}
             }
         }
 
-        self.locals[self.local_count as usize] = Local { name, depth: -1 };
-        self.local_count += 1;
+        self.locals.push(Local { name, depth: -1 });
         Ok(())
     }
 
     fn resolve_local(&mut self, name: Token) -> Result<i8, LoxError> {
-        for i in (0..self.local_count).rev() {
+        for i in (0..self.locals.len()).rev() {
             let local = self.locals[i];
             if name.lexeme == local.name.lexeme {
                 if local.depth == -1 {
@@ -716,8 +585,8 @@ impl<'s, 't> Compiler<'s, 't> {
             return Ok(());
         }
 
-        let name = self.parser().previous;
-        for i in (0..self.local_count).rev() {
+        let name = self.previous;
+        for i in (0..self.locals.len()).rev() {
             let local = self.locals[i];
             if local.depth != -1 && local.depth < self.scope_depth as isize {
                 break;
@@ -768,18 +637,18 @@ impl<'s, 't> Compiler<'s, 't> {
         if self.scope_depth == 0 {
             return;
         }
-        self.locals[self.local_count - 1].depth = self.scope_depth as isize;
+        self.locals.last_mut().unwrap().depth = self.scope_depth as isize;
     }
 
     // Errors
     fn synchronize(&mut self) -> Result<(), LoxError> {
-        self.parser().panic_mode = false;
+        self.panic_mode = false;
 
-        while self.parser().current.ty != TokenType::Eof {
-            if self.parser().previous.ty == TokenType::Semicolon {
+        while self.current.ty != TokenType::Eof {
+            if self.previous.ty == TokenType::Semicolon {
                 return Ok(());
             }
-            match self.parser().current.ty {
+            match self.current.ty {
                 TokenType::Class
                 | TokenType::Fun
                 | TokenType::Var
@@ -790,42 +659,12 @@ impl<'s, 't> Compiler<'s, 't> {
                 | TokenType::Return => return Ok(()),
                 _ => (),
             }
-            self.parser().advance()?;
+            self.advance()?;
         }
         Ok(())
     }
 
-    fn error_at_current(&mut self, message: &str) -> Option<LoxError> {
-        let current = self.parser().current;
-        self.error_at(current, message)
-    }
-
-    fn error(&mut self, message: &str) -> Option<LoxError> {
-        let previous = self.parser().previous;
-        self.error_at(previous, message)
-    }
-
-    fn error_at(&mut self, token: Token<'s>, message: &str) -> Option<LoxError> {
-        if self.parser().panic_mode {
-            return None;
-        }
-        self.parser().panic_mode = true;
-
-        let location = match token.ty {
-            TokenType::Eof => " at end".to_string(),
-            TokenType::Error => "".to_string(),
-            _ => format!(" at '{}'", token.lexeme),
-        };
-
-        self.parser().had_error = true;
-        Some(LoxError::CompileError {
-            message: message.to_string(),
-            location,
-            line: token.line,
-        })
-    }
-
-    fn get_rule(ty: TokenType) -> ParseRule<'s, 't> {
+    fn get_rule(ty: TokenType) -> ParseRule<'s> {
         match ty {
             TokenType::LeftParen => ParseRule {
                 prefix: Some(Self::grouping),
@@ -901,5 +740,80 @@ impl<'s, 't> Compiler<'s, 't> {
                 precedence: Precedence::None,
             },
         }
+    }
+}
+
+// Parser Parts
+impl<'s> Compiler<'s> {
+    fn advance(&mut self) -> Result<(), LoxError> {
+        self.previous = self.current;
+
+        let mut result = Ok(());
+        loop {
+            self.current = self.scanner.scan_token();
+            match self.current.ty {
+                TokenType::Error => match self.error_at_current(self.current.lexeme) {
+                    Some(e) => result = Err(e),
+                    None => {}
+                },
+                _ => break,
+            }
+        }
+
+        result
+    }
+
+    fn check_token(&self, ty: TokenType) -> bool {
+        self.current.ty == ty
+    }
+
+    fn consume(&mut self, ty: TokenType, message: &str) -> Result<(), LoxError> {
+        if self.check_token(ty) {
+            return self.advance();
+        }
+
+        match self.error_at_current(message) {
+            Some(e) => Err(e),
+            None => Ok(()),
+        }
+    }
+
+    fn match_token(&mut self, ty: TokenType) -> Result<bool, LoxError> {
+        match self.check_token(ty) {
+            false => Ok(false),
+            true => {
+                self.advance()?;
+                Ok(true)
+            }
+        }
+    }
+
+    // Errors
+    fn error_at_current(&mut self, message: &str) -> Option<LoxError> {
+        self.error_at(self.current, message)
+    }
+
+    fn error(&mut self, message: &str) -> Option<LoxError> {
+        self.error_at(self.previous, message)
+    }
+
+    fn error_at(&mut self, token: Token<'s>, message: &str) -> Option<LoxError> {
+        if self.panic_mode {
+            return None;
+        }
+        self.panic_mode = true;
+
+        let location = match token.ty {
+            TokenType::Eof => " at end".to_string(),
+            TokenType::Error => "".to_string(),
+            _ => format!(" at '{}'", token.lexeme),
+        };
+
+        self.had_error = true;
+        Some(LoxError::CompileError {
+            message: message.to_string(),
+            location,
+            line: token.line,
+        })
     }
 }
