@@ -1,5 +1,6 @@
 use std::ops::{Index, IndexMut};
 
+#[derive(Debug)]
 pub struct Heap<T> {
     objects: Vec<*mut T>,
 }
@@ -42,10 +43,6 @@ impl<T> Heap<T> {
             },
             None => None,
         }
-    }
-
-    pub fn merge(&mut self, mut other: Self) {
-        self.objects.append(&mut other.objects);
     }
 }
 

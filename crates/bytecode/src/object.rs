@@ -1,24 +1,10 @@
+use std::fmt;
+
 use crate::chunk::Chunk;
 use crate::heap::Heap;
 
-// impl fmt::Display for Obj {
-//     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-//         match self {
-//             Self::String(s) => fmt::Display::fmt(s, f),
-//             Self::Function(fun) => fmt::Display::fmt(
-//                 &match fun.name.len() {
-//                     0 => "<script>".to_string(),
-//                     _ => format!("<fn {}>", fun.name),
-//                 },
-//                 f,
-//             ),
-//         }
-//     }
-// }
-
 #[derive(Debug, Clone, PartialEq)]
 pub enum ObjType {
-    Null,
     String(String),
     Function(ObjFunction),
 }
@@ -65,19 +51,42 @@ impl Obj {
     }
 }
 
+impl fmt::Display for Obj {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match &self.value {
+            ObjType::String(s) => fmt::Display::fmt(s, f),
+            ObjType::Function(fun) => fmt::Display::fmt(
+                &match &fun.name {
+                    None => "<script>".to_string(),
+                    Some(n) => format!("<fn {}>", n),
+                },
+                f,
+            ),
+        }
+    }
+}
+
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct ObjFunction {
     pub arity: usize,
     pub chunk: Chunk,
-    pub name: String,
+    pub name: Option<String>,
 }
 
 impl ObjFunction {
-    pub fn new<S: Into<String>>(name: S) -> Self {
+    pub fn anon() -> Self {
         Self {
             arity: 0,
             chunk: Chunk::new(),
-            name: name.into(),
+            name: None,
+        }
+    }
+
+    pub fn named<S: Into<String>>(name: S) -> Self {
+        Self {
+            arity: 0,
+            chunk: Chunk::new(),
+            name: Some(name.into()),
         }
     }
 }

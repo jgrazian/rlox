@@ -85,8 +85,8 @@ impl Chunk {
 
     #[allow(dead_code)]
     pub fn disassemble(&self, name: &str) {
-        println!("== {} ==", name);
-        print!("{:?}", self);
+        eprintln!("== {} ==", name);
+        eprint!("{:?}", self);
     }
 }
 

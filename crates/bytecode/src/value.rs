@@ -1,5 +1,8 @@
 use std::fmt;
 
+use crate::heap::Heap;
+use crate::object::Obj;
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
     Nil,
@@ -9,13 +12,6 @@ pub enum Value {
 }
 
 impl Value {
-    pub fn as_bool(&self) -> bool {
-        match self {
-            Self::Bool(b) => *b,
-            _ => panic!("Value is not a boolean"),
-        }
-    }
-
     pub fn as_number(&self) -> f64 {
         match self {
             Self::Number(n) => *n,
@@ -37,8 +33,17 @@ impl Value {
         }
     }
 
-    pub fn function() -> Self {
-        Self::Obj(0)
+    pub fn print(&self, heap: &Heap<Obj>) -> String {
+        match self {
+            Self::Nil => "nil".to_string(),
+            Self::Bool(true) => "true".to_string(),
+            Self::Bool(false) => "false".to_string(),
+            Self::Number(n) => format!("{}", n),
+            Self::Obj(i) => match heap.get(*i) {
+                None => "Obj<>".to_string(),
+                Some(o) => format!("{}", o),
+            },
+        }
     }
 }
 
@@ -49,7 +54,7 @@ impl fmt::Display for Value {
             Self::Bool(true) => write!(f, "true"),
             Self::Bool(false) => write!(f, "false"),
             Self::Number(n) => write!(f, "{}", n),
-            Self::Obj(o) => write!(f, "Obj<{}>", o),
+            Self::Obj(i) => write!(f, "Obj<{}>", i),
         }
     }
 }

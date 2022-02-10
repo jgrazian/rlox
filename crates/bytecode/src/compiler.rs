@@ -3,7 +3,7 @@ use crate::error::LoxError;
 use crate::heap::Heap;
 use crate::object::{Obj, ObjFunction};
 use crate::scanner::{Scanner, Token, TokenType};
-use crate::value::{self, Value};
+use crate::value::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, PartialOrd, Eq, Ord)]
 enum Precedence {
@@ -83,13 +83,13 @@ impl<'s> Compiler<'s> {
             current: Token::default(),
             heap,
             functions: Vec::new(),
-            locals: vec![Local::default(); 16],
+            locals: Vec::with_capacity(16),
             scope_depth: 0,
         }
     }
 
     pub fn compile(&mut self) -> Result<ObjFunction, LoxError> {
-        self.functions.push(ObjFunction::new("main"));
+        self.functions.push(ObjFunction::anon());
         self.advance()?;
 
         while !self.match_token(TokenType::Eof)? {
@@ -361,7 +361,7 @@ impl<'s> Compiler<'s> {
     }
 
     fn function(&mut self, ty: FunctionType) -> Result<(), LoxError> {
-        self.functions.push(ObjFunction::new(""));
+        self.functions.push(ObjFunction::named(""));
         self.begin_scope();
 
         self.consume(TokenType::LeftParen, "Expect '(' after function name.")?;
@@ -485,12 +485,11 @@ impl<'s> Compiler<'s> {
         #[cfg(feature = "debug_print_code")]
         {
             if !self.had_error {
-                let name = if self.function.name.is_empty() {
-                    "script".to_string()
-                } else {
-                    self.function.name.clone()
+                let name = match &self.compiling_function().name {
+                    Some(n) => n.to_string(),
+                    None => "script".to_string(),
                 };
-                self.current_chunk().disassemble(&name);
+                self.compiling_function().chunk.disassemble(&name);
             }
         }
         self.functions.pop().unwrap()
