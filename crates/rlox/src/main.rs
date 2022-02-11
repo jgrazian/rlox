@@ -3,6 +3,7 @@ use std::error::Error;
 use std::process;
 
 fn main() -> Result<(), Box<dyn Error>> {
+    let mut stdout = std::io::stdout();
     let args = env::args().collect::<Vec<_>>();
     if args.iter().any(|s| s == "--tree") {
         match args.len() {
@@ -16,7 +17,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     } else {
         match args.len() {
             1 => bytecode::repl(),
-            // 2 => bytecode::run_file(&args[1]),
+            2 => bytecode::run_file(&args[1], &mut stdout),
             _ => {
                 println!("Usage: rlox [script]");
                 process::exit(64)

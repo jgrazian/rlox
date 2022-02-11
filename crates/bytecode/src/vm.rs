@@ -9,7 +9,7 @@ use crate::chunk::OpCode::*;
 use crate::compiler::Compiler;
 use crate::error::LoxError;
 use crate::heap::Heap;
-use crate::object::{Obj, ObjFunction, ObjType};
+use crate::object::{Obj, ObjClosure, ObjFunction, ObjType};
 use crate::value::Value;
 
 const FRAME_MAX: usize = 64;
@@ -171,10 +171,12 @@ impl Vm {
                         }
                     }
                 }
+                OpGetUpValue => (),
+                OpSetUpValue => (),
                 OpEqual => {
                     let b = frame.pop();
                     let a = frame.pop();
-                    frame.push(Value::Bool(a == b))
+                    frame.push(Value::Bool(Value::equal(&a, &b, &self.heap)))
                 }
                 OpGreater => frame.binary_op(|a, b| Value::Bool(a > b)),
                 OpLess => frame.binary_op(|a, b| Value::Bool(a < b)),
@@ -236,6 +238,32 @@ impl Vm {
                     let arg_count = frame.read_byte() as usize;
                     self.call_value(frame.peek(arg_count), arg_count, &mut frames)?;
                     frame = frames.last_mut().unwrap();
+                }
+                OpClosure => {
+                    let function = frame.read_constant().as_obj();
+                    let closure = ObjClosure { function };
+                    let value = Value::Obj(Obj::alloc_closure(&mut self.heap, closure));
+                    frame.push(value);
+
+                    let closure = self.heap.get(frame.peek(0).as_obj()).unwrap().as_closure();
+                    for i in 0..closure.upvalues.len() {
+                        let is_local = frame.read_byte() != 0;
+                        let index = frame.read_byte() as usize;
+
+                        if is_local {
+                            let value_ptr: *mut Value = &mut value!(index);
+                            let upvalue = self.capture_upvalue(value_ptr, out_stream);
+                            self.peek(0).as_closure().upvalues[i] = upvalue;
+                        } else {
+                            self.peek(0).as_closure().upvalues[i] =
+                                unsafe { (*(*frame).closure).as_closure().upvalues[index] }
+                        }
+                    }
+                }
+                OpCloseUpvalue => {
+                    let ptr: *mut Value = &mut self.stack[self.stack_top - 1];
+                    self.close_upvalues(ptr);
+                    self.pop();
                 }
                 OpReturn => {
                     let result = frame.pop();

@@ -14,6 +14,8 @@ pub enum OpCode {
     OpGetGlobal,
     OpDefineGlobal,
     OpSetGlobal,
+    OpGetUpvalue,
+    OpSetUpvalue,
     OpEqual,
     OpGreater,
     OpLess,
@@ -28,6 +30,8 @@ pub enum OpCode {
     OpJumpIfFalse,
     OpLoop,
     OpCall,
+    OpClosure,
+    OpCloseUpvalue,
     OpReturn,
 }
 
@@ -92,65 +96,118 @@ impl Chunk {
         let mut offset = 0;
         while offset < self.code.len() {
             let op = &self.code[offset].into();
-            let repr = self.debug_op(offset, op, heap);
-            eprintln!("{}", repr);
-            offset += op.size();
+            let (_offset, repr) = self.debug_op(offset, op, heap);
+            eprint!("{}", repr);
+            offset = _offset;
         }
     }
 }
 
 impl Chunk {
-    pub fn debug_op(&self, offset: usize, op: &OpCode, heap: &Heap<Obj>) -> String {
-        fn const_instr(chunk: &Chunk, name: &str, offset: usize, heap: &Heap<Obj>) -> String {
-            format!(
+    pub fn debug_op(&self, offset: usize, op: &OpCode, heap: &Heap<Obj>) -> (usize, String) {
+        fn single_instr(name: &str) -> (usize, String) {
+            (1, name.to_string())
+        }
+
+        fn const_instr(
+            chunk: &Chunk,
+            name: &str,
+            offset: usize,
+            heap: &Heap<Obj>,
+        ) -> (usize, String) {
+            let s = format!(
                 "{:<16} {:>4} '{}'",
                 name,
                 chunk.code[offset + 1],
                 chunk.constants[chunk.code[offset + 1] as usize].print(heap)
-            )
+            );
+            (2, s)
         }
 
-        fn byte_instr(chunk: &Chunk, name: &str, offset: usize) -> String {
+        fn byte_instr(chunk: &Chunk, name: &str, offset: usize) -> (usize, String) {
             let slot = chunk.code[offset + 1] as usize;
-            format!("{:<16} {:>4}", name, slot)
+            (2, format!("{:<16} {:>4}", name, slot))
         }
 
-        fn jump_instr(chunk: &Chunk, name: &str, offset: usize, sign: isize) -> String {
+        fn jump_instr(chunk: &Chunk, name: &str, offset: usize, sign: isize) -> (usize, String) {
             let jump = ((chunk.code[offset + 1] as isize) << 8) | (chunk.code[offset + 2] as isize);
-            format!(
+            let s = format!(
                 "{:<16} {:>4} -> {}",
                 name,
                 offset,
                 offset as isize + 3 + sign * jump
-            )
+            );
+            (3, s)
         }
 
-        let repr = match op {
+        let (inc, repr) = match op {
             OpCode::OpConstant => const_instr(self, "OP_CONST", offset, heap),
-            OpCode::OpNil => "OP_NIL".to_string(),
-            OpCode::OpTrue => "OP_TRUE".to_string(),
-            OpCode::OpFalse => "OP_FALSE".to_string(),
-            OpCode::OpPop => "OP_POP".to_string(),
+            OpCode::OpNil => single_instr("OP_NIL"),
+            OpCode::OpTrue => single_instr("OP_TRUE"),
+            OpCode::OpFalse => single_instr("OP_FALSE"),
+            OpCode::OpPop => single_instr("OP_POP"),
             OpCode::OpGetLocal => byte_instr(self, "OP_GET_LOCAL", offset),
             OpCode::OpSetLocal => byte_instr(self, "OP_SET_LOCAL", offset),
             OpCode::OpGetGlobal => const_instr(self, "OP_GET_GLOBAL", offset, heap),
             OpCode::OpDefineGlobal => const_instr(self, "OP_DEFINE_GLOBAL", offset, heap),
             OpCode::OpSetGlobal => const_instr(self, "OP_SET_GLOBAL", offset, heap),
-            OpCode::OpEqual => "OP_EQUAL".to_string(),
-            OpCode::OpGreater => "OP_GREATER".to_string(),
-            OpCode::OpLess => "OP_LESS".to_string(),
-            OpCode::OpAdd => "OP_ADD".to_string(),
-            OpCode::OpSubtract => "OP_SUBTRACT".to_string(),
-            OpCode::OpMultiply => "OP_MULTIPLY".to_string(),
-            OpCode::OpDivide => "OP_DIVIDE".to_string(),
-            OpCode::OpNot => "OP_NOT".to_string(),
-            OpCode::OpNegate => "OP_NEGATE".to_string(),
-            OpCode::OpPrint => "OP_PRINT".to_string(),
+            OpCode::OpGetUpvalue => byte_instr(self, "OP_GET_UPVALUE", offset),
+            OpCode::OpSetUpvalue => byte_instr(self, "OP_SET_UPVALUE", offset),
+            OpCode::OpEqual => single_instr("OP_EQUAL"),
+            OpCode::OpGreater => single_instr("OP_GREATER"),
+            OpCode::OpLess => single_instr("OP_LESS"),
+            OpCode::OpAdd => single_instr("OP_ADD"),
+            OpCode::OpSubtract => single_instr("OP_SUBTRACT"),
+            OpCode::OpMultiply => single_instr("OP_MULTIPLY"),
+            OpCode::OpDivide => single_instr("OP_DIVIDE"),
+            OpCode::OpNot => single_instr("OP_NOT"),
+            OpCode::OpNegate => single_instr("OP_NEGATE"),
+            OpCode::OpPrint => single_instr("OP_PRINT"),
             OpCode::OpJump => jump_instr(self, "OP_JUMP", offset, 1),
             OpCode::OpJumpIfFalse => jump_instr(self, "OP_JUMP_IF_FALSE", offset, 1),
             OpCode::OpLoop => jump_instr(self, "OP_LOOP", offset, -1),
             OpCode::OpCall => byte_instr(self, "OP_CALL", offset),
-            OpCode::OpReturn => "OP_RETURN".to_string(),
+            OpCode::OpClosure => {
+                let mut offset = offset + 1;
+                let constant = self.code[offset] as usize;
+                offset += 1;
+
+                let repr = format!(
+                    "{:<16} {:>4} {}",
+                    "OP_CLOSURE", constant, self.constants[constant]
+                );
+
+                let line = if offset - 2 > 0 && self.lines[offset - 2] == self.lines[offset - 3] {
+                    "   |".to_string()
+                } else {
+                    format!("{:4}", self.lines[offset])
+                };
+
+                let mut top = format!("{:04} {} {}\n", offset - 2, line, repr);
+
+                return (offset, top);
+
+                // let function = self.constants[constant].as_function();
+                // for _ in 0..function.upvalue_count {
+                //     let is_local = if self.code[offset] == 0 {
+                //         "upvalue"
+                //     } else {
+                //         "local"
+                //     };
+                //     offset += 1;
+                //     let index = self.code[offset];
+                //     offset += 1;
+                //     top += &format!(
+                //         "{:04}    |                       {} {}\n",
+                //         offset - 2,
+                //         is_local,
+                //         index
+                //     )
+                // }
+                // return (offset, top);
+            }
+            OpCode::OpCloseUpvalue => single_instr("OP_CLOSE_UPVALUE"),
+            OpCode::OpReturn => single_instr("OP_RETURN"),
         };
 
         let line = if offset > 0 && self.lines[offset] == self.lines[offset - 1] {
@@ -159,6 +216,120 @@ impl Chunk {
             format!("{:4}", self.lines[offset])
         };
 
-        format!("{:04} {} {}", offset, line, repr)
+        (offset + inc, format!("{:04} {} {}\n", offset, line, repr))
     }
 }
+
+// impl Chunk {
+//     pub fn debug_op(&self, offset: usize, op: &OpCode) -> (usize, String) {
+//         fn single_instr(name: &str) -> (usize, String) {
+//             (1, name.to_string())
+//         }
+
+//         fn const_instr(chunk: &Chunk, name: &str, offset: usize) -> (usize, String) {
+//             (
+//                 2,
+//                 format!(
+//                     "{:<16} {:>4} '{}'",
+//                     name,
+//                     chunk.code[offset + 1],
+//                     chunk.constants[chunk.code[offset + 1] as usize]
+//                 ),
+//             )
+//         }
+
+//         fn byte_instr(chunk: &Chunk, name: &str, offset: usize) -> (usize, String) {
+//             let slot = chunk.code[offset + 1] as usize;
+//             (2, format!("{:<16} {:>4}", name, slot))
+//         }
+
+//         fn jump_instr(chunk: &Chunk, name: &str, offset: usize, sign: isize) -> (usize, String) {
+//             let jump = ((chunk.code[offset + 1] as isize) << 8) | (chunk.code[offset + 2] as isize);
+//             (
+//                 3,
+//                 format!(
+//                     "{:<16} {:>4} -> {}",
+//                     name,
+//                     offset,
+//                     offset as isize + 3 + sign * jump
+//                 ),
+//             )
+//         }
+
+//         let (inc, repr) = match op {
+//             OpCode::OpConstant => const_instr(self, "OP_CONST", offset),
+//             OpCode::OpNil => single_instr("OP_NIL"),
+//             OpCode::OpTrue => single_instr("OP_TRUE"),
+//             OpCode::OpFalse => single_instr("OP_FALSE"),
+//             OpCode::OpPop => single_instr("OP_POP"),
+//             OpCode::OpGetLocal => byte_instr(self, "OP_GET_LOCAL", offset),
+//             OpCode::OpSetLocal => byte_instr(self, "OP_SET_LOCAL", offset),
+//             OpCode::OpGetGlobal => const_instr(self, "OP_GET_GLOBAL", offset),
+//             OpCode::OpDefineGlobal => const_instr(self, "OP_DEFINE_GLOBAL", offset),
+//             OpCode::OpSetGlobal => const_instr(self, "OP_SET_GLOBAL", offset),
+//             OpCode::OpGetUpvalue => byte_instr(self, "OP_GET_UPVALUE", offset),
+//             OpCode::OpSetUpvalue => byte_instr(self, "OP_SET_UPVALUE", offset),
+//             OpCode::OpEqual => single_instr("OP_EQUAL"),
+//             OpCode::OpGreater => single_instr("OP_GREATER"),
+//             OpCode::OpLess => single_instr("OP_LESS"),
+//             OpCode::OpAdd => single_instr("OP_ADD"),
+//             OpCode::OpSubtract => single_instr("OP_SUBTRACT"),
+//             OpCode::OpMultiply => single_instr("OP_MULTIPLY"),
+//             OpCode::OpDivide => single_instr("OP_DIVIDE"),
+//             OpCode::OpNot => single_instr("OP_NOT"),
+//             OpCode::OpNegate => single_instr("OP_NEGATE"),
+//             OpCode::OpPrint => single_instr("OP_PRINT"),
+//             OpCode::OpJump => jump_instr(self, "OP_JUMP", offset, 1),
+//             OpCode::OpJumpIfFalse => jump_instr(self, "OP_JUMP_IF_FALSE", offset, 1),
+//             OpCode::OpLoop => jump_instr(self, "OP_LOOP", offset, -1),
+//             OpCode::OpCall => byte_instr(self, "OP_CALL", offset),
+//             OpCode::OpClosure => {
+//                 let mut offset = offset + 1;
+//                 let constant = self.code[offset] as usize;
+//                 offset += 1;
+
+//                 let repr = format!(
+//                     "{:<16} {:>4} {}",
+//                     "OP_CLOSURE", constant, self.constants[constant]
+//                 );
+
+//                 let line = if offset - 2 > 0 && self.lines[offset - 2] == self.lines[offset - 3] {
+//                     "   |".to_string()
+//                 } else {
+//                     format!("{:4}", self.lines[offset])
+//                 };
+
+//                 let mut top = format!("{:04} {} {}\n", offset - 2, line, repr);
+
+//                 let function = self.constants[constant].as_function();
+//                 for _ in 0..function.upvalue_count {
+//                     let is_local = if self.code[offset] == 0 {
+//                         "upvalue"
+//                     } else {
+//                         "local"
+//                     };
+//                     offset += 1;
+//                     let index = self.code[offset];
+//                     offset += 1;
+//                     top += &format!(
+//                         "{:04}    |                       {} {}\n",
+//                         offset - 2,
+//                         is_local,
+//                         index
+//                     )
+//                 }
+//                 return (offset, top);
+//             }
+//             OpCode::OpCloseUpvalue => single_instr("OP_CLOSE_UPVALUE"),
+//             OpCode::OpReturn => single_instr("OP_RETURN"),
+//         };
+
+//         let line = if offset > 0 && self.lines[offset] == self.lines[offset - 1] {
+//             "   |".to_string()
+//         } else {
+//             format!("{:4}", self.lines[offset])
+//         };
+
+//         (offset + inc, format!("{:04} {} {}\n", offset, line, repr))
+//     }
+// }

@@ -10,6 +10,7 @@ pub enum ObjType {
     String(String),
     Function(ObjFunction),
     Native(ObjNative),
+    Closure(ObjClosure),
 }
 
 impl Default for ObjType {
@@ -25,6 +26,7 @@ impl Debug for ObjType {
             ObjType::String(s) => write!(f, "{:?}", s),
             ObjType::Function(fun) => write!(f, "{:?}", fun),
             ObjType::Native(..) => write!(f, "fn<native>"),
+            ObjType::Closure(c) => write!(f, "{:?}", c),
         }
     }
 }
@@ -59,6 +61,13 @@ impl Obj {
         index
     }
 
+    pub fn alloc_closure(heap: &mut Heap<Self>, closure: ObjClosure) -> usize {
+        let index = heap.push(Obj {
+            value: ObjType::Closure(closure),
+        });
+        index
+    }
+
     pub fn as_string(&self) -> &String {
         match &self.value {
             ObjType::String(s) => s,
@@ -70,6 +79,13 @@ impl Obj {
         match &self.value {
             ObjType::Function(f) => f,
             _ => panic!("Expected function"),
+        }
+    }
+
+    pub fn as_closure(&self) -> &ObjClosure {
+        match &self.value {
+            ObjType::Closure(c) => c,
+            _ => panic!("Expected closure"),
         }
     }
 
@@ -93,6 +109,7 @@ impl fmt::Display for Obj {
                 f,
             ),
             ObjType::Native(..) => write!(f, "<fn native>"),
+            ObjType::Closure(c) => fmt::Display::fmt(&format!("<closure {}>", c.function), f),
             ObjType::Null => fmt::Display::fmt("null", f),
         }
     }
@@ -136,6 +153,12 @@ impl ObjFunction {
             ty: FunctionType::Function,
         }
     }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ObjClosure {
+    pub function: usize,
+    pub upvalues: Vec<usize>,
 }
 
 pub struct ObjNative {

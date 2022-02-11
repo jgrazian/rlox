@@ -36,15 +36,15 @@ pub fn repl() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-// pub fn run_file(path: &str) -> Result<(), Box<dyn Error>> {
-//     let file = fs::read_to_string(path)?;
-//     let result = vm::Vm::new().interpret(&file);
+pub fn run_file<F: Write>(path: &str, out_stream: &mut F) -> Result<(), Box<dyn Error>> {
+    let file = fs::read_to_string(path)?;
+    let result = vm::Vm::new().interpret(&file, out_stream);
 
-//     match result {
-//         Ok(_) => Ok(()),
-//         Err(e) => {
-//             eprint!("{}", e);
-//             process::exit(65);
-//         }
-//     }
-// }
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            eprint!("{}", e);
+            process::exit(65);
+        }
+    }
+}

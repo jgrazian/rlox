@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::heap::Heap;
-use crate::object::Obj;
+use crate::object::{Obj, ObjType};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
@@ -40,9 +40,25 @@ impl Value {
             Self::Bool(false) => "false".to_string(),
             Self::Number(n) => format!("{}", n),
             Self::Obj(i) => match heap.get(*i) {
-                None => "Obj<>".to_string(),
+                None => "invalid".to_string(),
                 Some(o) => format!("{}", o),
             },
+        }
+    }
+
+    pub fn equal(left: &Self, right: &Self, heap: &Heap<Obj>) -> bool {
+        match (left, right) {
+            (Self::Nil, Self::Nil) => true,
+            (Self::Bool(l), Self::Bool(r)) => l == r,
+            (Self::Number(l), Self::Number(r)) => l == r,
+            (Self::Obj(l), Self::Obj(r)) => match (heap.get(*l), heap.get(*r)) {
+                (Some(l), Some(r)) => match (&l.value, &r.value) {
+                    (ObjType::String(l), ObjType::String(r)) => l == r,
+                    _ => false,
+                },
+                _ => false,
+            },
+            _ => false,
         }
     }
 }
