@@ -1,13 +1,15 @@
-use std::fmt;
+use std::cell::Cell;
+use std::fmt::{self, Debug};
 
 use crate::chunk::Chunk;
 use crate::heap::Heap;
+use crate::value::Value;
 
-#[derive(Debug, Clone, PartialEq)]
 pub enum ObjType {
     Null,
     String(String),
     Function(ObjFunction),
+    Native(ObjNative),
 }
 
 impl Default for ObjType {
@@ -16,7 +18,18 @@ impl Default for ObjType {
     }
 }
 
-#[derive(Debug, Default, Clone, PartialEq)]
+impl Debug for ObjType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            ObjType::Null => write!(f, "null",),
+            ObjType::String(s) => write!(f, "{:?}", s),
+            ObjType::Function(fun) => write!(f, "{:?}", fun),
+            ObjType::Native(..) => write!(f, "fn<native>"),
+        }
+    }
+}
+
+#[derive(Debug, Default)]
 pub struct Obj {
     pub value: ObjType,
 }
@@ -32,6 +45,16 @@ impl Obj {
     pub fn alloc_function(heap: &mut Heap<Self>, function: ObjFunction) -> usize {
         let index = heap.push(Obj {
             value: ObjType::Function(function),
+        });
+        index
+    }
+
+    pub fn alloc_native(
+        heap: &mut Heap<Self>,
+        function: fn(usize, &[Cell<Value>]) -> Value,
+    ) -> usize {
+        let index = heap.push(Obj {
+            value: ObjType::Native(ObjNative { function }),
         });
         index
     }
@@ -69,7 +92,8 @@ impl fmt::Display for Obj {
                 },
                 f,
             ),
-            ObjType::Null => fmt::Display::fmt("Null", f),
+            ObjType::Native(..) => write!(f, "<fn native>"),
+            ObjType::Null => fmt::Display::fmt("null", f),
         }
     }
 }
@@ -112,4 +136,8 @@ impl ObjFunction {
             ty: FunctionType::Function,
         }
     }
+}
+
+pub struct ObjNative {
+    pub function: fn(usize, &[Cell<Value>]) -> Value,
 }

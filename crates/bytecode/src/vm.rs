@@ -1,8 +1,11 @@
 use std::cell::Cell;
 use std::collections::HashMap;
 use std::io::Write;
+use std::time::{SystemTime, UNIX_EPOCH};
 
-use crate::chunk::OpCode::{self, *};
+#[allow(unused_imports)]
+use crate::chunk::OpCode;
+use crate::chunk::OpCode::*;
 use crate::compiler::Compiler;
 use crate::error::LoxError;
 use crate::heap::Heap;
@@ -70,11 +73,14 @@ pub struct Vm {
 
 impl Vm {
     pub fn new() -> Self {
-        Self {
+        let mut vm = Self {
             stack: vec![Cell::new(Value::Nil); STACK_MAX],
             heap: Heap::new(),
             globals: HashMap::new(),
-        }
+        };
+
+        vm.define_native("clock", clock_native);
+        vm
     }
 
     pub fn interpret<S: Write>(&mut self, source: &str, stream: &mut S) -> Result<(), LoxError> {
@@ -145,7 +151,7 @@ impl Vm {
                         }
                         None => {
                             let msg = format!("Undefined variable '{}'.", name);
-                            return Self::runtime_error(msg, &frame);
+                            return Self::runtime_error(msg, &frames);
                         }
                     }
                 }
@@ -161,7 +167,7 @@ impl Vm {
                         Some(v) => *v = _v,
                         None => {
                             let msg = format!("Undefined variable '{}'.", name);
-                            return Self::runtime_error(msg, &frame);
+                            return Self::runtime_error(msg, &frames);
                         }
                     }
                 }
@@ -180,10 +186,7 @@ impl Vm {
                     }
                     (Value::Obj(a), Value::Obj(b)) => {
                         if !self.heap[a].is_string() || !self.heap[b].is_string() {
-                            return Self::runtime_error(
-                                "Operands must be two strings.",
-                                &mut frame,
-                            );
+                            return Self::runtime_error("Operands must be two strings.", &frames);
                         }
                         frame.pop();
                         frame.pop();
@@ -193,7 +196,7 @@ impl Vm {
                     _ => {
                         return Self::runtime_error(
                             "Operands must be two numbers or two strings.",
-                            &frame,
+                            &frames,
                         )
                     }
                 },
@@ -209,7 +212,7 @@ impl Vm {
                         let v = Value::Number(-frame.pop().as_number());
                         frame.push(v)
                     }
-                    _ => return Self::runtime_error("Operand must be a number.", &frame),
+                    _ => return Self::runtime_error("Operand must be a number.", &frames),
                 },
                 OpPrint => {
                     writeln!(stream, "{}", frame.pop().print(&self.heap))
@@ -245,7 +248,6 @@ impl Vm {
                 }
             }
         }
-        Ok(())
     }
 
     fn call_value(
@@ -260,12 +262,17 @@ impl Vm {
                     self.call(f, arg_count, frames)?;
                     return Ok(());
                 }
+                ObjType::Native(n) => {
+                    let slots = &frames.last().unwrap().slots[1..1 + arg_count];
+                    let result = (n.function)(arg_count, slots);
+                    frames.last().unwrap().slots[1].set(result);
+                    return Ok(());
+                }
                 _ => (),
             },
             _ => (),
         };
-        let frame = frames.last().unwrap();
-        Self::runtime_error("Can only call functions and classes.", frame)
+        Self::runtime_error("Can only call functions and classes.", frames)
     }
 
     fn call(
@@ -279,11 +286,11 @@ impl Vm {
                 "Expected {} arguments but got {}.",
                 function.arity, arg_count
             );
-            return Self::runtime_error(msg, frames.last().unwrap());
+            return Self::runtime_error(msg, frames);
         }
 
         if frames.len() == FRAME_MAX {
-            return Self::runtime_error("stack overflow", frames.last().unwrap());
+            return Self::runtime_error("stack overflow", frames);
         }
 
         let prev = frames.last_mut().unwrap();
@@ -300,13 +307,42 @@ impl Vm {
         Ok(())
     }
 
-    fn runtime_error<M: Into<String>>(message: M, frame: &CallFrame<'_>) -> Result<(), LoxError> {
-        let instr = frame.ip - 1;
-        let line = frame.function.chunk.lines[instr];
-        Err(LoxError::RuntimeError(format!(
-            "{}\n[line {}] in script",
-            message.into(),
-            line
-        )))
+    fn runtime_error<M: Into<String>>(
+        message: M,
+        frames: &[CallFrame<'_>],
+    ) -> Result<(), LoxError> {
+        let mut msg = format!("{}\n", message.into());
+
+        for f in frames.iter().rev() {
+            let instr = f.ip - 1;
+            let line = f.function.chunk.lines[instr];
+
+            if let Some(name) = &f.function.name {
+                msg.push_str(&format!("[line {}] in {}\n", line, name));
+            } else {
+                msg.push_str(&format!("[line {}] in <script>\n", line));
+            }
+        }
+
+        Err(LoxError::RuntimeError(msg))
     }
+
+    fn define_native<M: Into<String>>(
+        &mut self,
+        name: M,
+        function: fn(usize, &[Cell<Value>]) -> Value,
+    ) {
+        let value = Value::Obj(Obj::alloc_native(&mut self.heap, function));
+        self.stack[0] = Cell::new(value);
+        self.globals.insert(name.into(), self.stack[0].get());
+        self.stack[0] = Cell::new(Value::Nil);
+    }
+}
+
+fn clock_native(_arg_count: usize, _args: &[Cell<Value>]) -> Value {
+    let time = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs_f64();
+    Value::Number(time)
 }

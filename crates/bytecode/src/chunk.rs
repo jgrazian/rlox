@@ -1,5 +1,3 @@
-use std::fmt;
-
 use crate::heap::Heap;
 use crate::object::Obj;
 use crate::value::Value;
