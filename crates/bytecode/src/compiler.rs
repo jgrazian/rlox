@@ -1,7 +1,7 @@
 use crate::chunk::OpCode;
 use crate::error::LoxError;
 use crate::heap::Heap;
-use crate::object::{FunctionType, Obj, ObjFunction};
+use crate::object::{FunctionType, Obj, ObjClosure, ObjFunction};
 use crate::scanner::{Scanner, Token, TokenType};
 use crate::value::Value;
 
@@ -50,6 +50,12 @@ struct Local<'s> {
     depth: isize,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+struct Upvalue {
+    index: u8,
+    is_local: bool,
+}
+
 pub const U8_COUNT: usize = 256;
 
 pub struct Compiler<'s> {
@@ -63,7 +69,8 @@ pub struct Compiler<'s> {
     heap: &'s mut Heap<Obj>,
 
     functions: Vec<ObjFunction>,
-    locals: Vec<Local<'s>>,
+    upvalues: Vec<Vec<Upvalue>>,
+    locals: Vec<Vec<Local<'s>>>,
     scope_depth: usize,
 }
 
@@ -76,14 +83,16 @@ impl<'s> Compiler<'s> {
             previous: Token::default(),
             current: Token::default(),
             heap,
-            functions: Vec::new(),
-            locals: Vec::with_capacity(32),
+            functions: Vec::with_capacity(16),
+            upvalues: Vec::with_capacity(8),
+            locals: Vec::with_capacity(8),
             scope_depth: 0,
         };
-        compiler.locals.push(Local {
+        compiler.locals.push(vec![Local {
             name: Token::default(),
             depth: 0,
-        });
+        }]);
+        compiler.upvalues.push(vec![]);
         compiler
     }
 
@@ -306,13 +315,19 @@ impl<'s> Compiler<'s> {
     }
 
     fn named_variable(&mut self, name: Token, can_assign: bool) -> Result<(), LoxError> {
-        let mut arg = self.resolve_local(name)?;
+        let mut arg = self.resolve_local(name, self.scope_depth)?;
         let (get_op, set_op) = match arg {
-            -1 => {
-                arg = self.identifier_constant(name) as i8;
-                (OpCode::OpGetGlobal, OpCode::OpSetGlobal)
-            }
-            _ => (OpCode::OpGetLocal, OpCode::OpSetLocal),
+            v if v != -1 => (OpCode::OpGetLocal, OpCode::OpSetLocal),
+            _ => match self.resolve_upvalue(name, self.scope_depth)? {
+                -1 => {
+                    arg = self.identifier_constant(name) as i8;
+                    (OpCode::OpGetGlobal, OpCode::OpSetGlobal)
+                }
+                v @ _ => {
+                    arg = v;
+                    (OpCode::OpGetUpvalue, OpCode::OpSetUpvalue)
+                }
+            },
         };
 
         if can_assign && self.match_token(TokenType::Equal)? {
@@ -382,6 +397,11 @@ impl<'s> Compiler<'s> {
     fn function(&mut self) -> Result<(), LoxError> {
         self.functions
             .push(ObjFunction::named(self.previous.lexeme));
+        self.locals.push(vec![Local {
+            name: self.previous,
+            depth: self.scope_depth as isize + 1,
+        }]);
+        self.upvalues.push(vec![]);
         self.begin_scope();
 
         self.consume(TokenType::LeftParen, "Expect '(' after function name.")?;
@@ -407,11 +427,20 @@ impl<'s> Compiler<'s> {
         self.block()?;
         self.end_scope();
 
-        let function = self.end_compiler();
+        let closure = self.end_compiler();
 
-        let value = Value::Obj(Obj::alloc_function(&mut self.heap, function));
+        let value = Value::Obj(Obj::alloc_function(&mut self.heap, closure));
         let constant = self.make_constant(value);
-        self.emit_bytes(OpCode::OpConstant, constant);
+        self.emit_bytes(OpCode::OpClosure, constant);
+
+        for i in 0..self.upvalues.last().unwrap().len() {
+            let upvalue = self.upvalues.last().unwrap()[i];
+            self.emit_byte(if upvalue.is_local { 1 } else { 0 });
+            self.emit_byte(upvalue.index);
+        }
+        self.locals.pop();
+        self.upvalues.pop();
+
         Ok(())
     }
 
@@ -499,11 +528,8 @@ impl<'s> Compiler<'s> {
     fn end_scope(&mut self) {
         self.scope_depth -= 1;
 
-        while self.locals.len() > 0
-            && self.locals[self.locals.len() - 1].depth > self.scope_depth as isize
-        {
+        for _ in 0..self.locals.last().unwrap().len() {
             self.emit_byte(OpCode::OpPop);
-            self.locals.pop();
         }
     }
 
@@ -584,20 +610,24 @@ impl<'s> Compiler<'s> {
     }
 
     fn add_local(&mut self, name: Token<'s>) -> Result<(), LoxError> {
-        if self.locals.len() >= U8_COUNT {
+        if self.locals.last().unwrap().len() >= U8_COUNT {
             match self.error("Too many local variables in function.") {
                 Some(e) => return Err(e),
                 None => {}
             }
         }
 
-        self.locals.push(Local { name, depth: -1 });
+        self.locals
+            .last_mut()
+            .unwrap()
+            .push(Local { name, depth: -1 });
         Ok(())
     }
 
-    fn resolve_local(&mut self, name: Token) -> Result<i8, LoxError> {
-        for i in (0..self.locals.len()).rev() {
-            let local = self.locals[i];
+    fn resolve_local(&mut self, name: Token, depth: usize) -> Result<i8, LoxError> {
+        for i in (0..self.locals[depth].len()).rev() {
+            let local = self.locals[depth][i];
+
             if name.lexeme == local.name.lexeme {
                 if local.depth == -1 {
                     match self.error("Can't read local variable in its own initializer.") {
@@ -617,8 +647,8 @@ impl<'s> Compiler<'s> {
         }
 
         let name = self.previous;
-        for i in (0..self.locals.len()).rev() {
-            let local = self.locals[i];
+        for i in (0..self.locals.last().unwrap().len()).rev() {
+            let local = self.locals.last().unwrap()[i];
             if local.depth != -1 && local.depth < self.scope_depth as isize {
                 break;
             }
@@ -640,6 +670,47 @@ impl<'s> Compiler<'s> {
         }
 
         self.emit_bytes(OpCode::OpDefineGlobal, global);
+    }
+
+    fn resolve_upvalue(&mut self, name: Token, depth: usize) -> Result<i8, LoxError> {
+        if depth == 1 {
+            return Ok(-1);
+        }
+
+        // TODO: This local lookup is probably wrong
+        let local = self.resolve_local(name, depth - 1)?;
+        if local != -1 {
+            // self.locals[local as usize].is_captured = true;
+            return self.add_upvalue(local as u8, true, depth).map(|v| v as i8);
+        }
+
+        let upvalue = self.resolve_upvalue(name, depth - 1)?;
+        if upvalue != -1 {
+            return self
+                .add_upvalue(upvalue as u8, false, depth)
+                .map(|v| v as i8);
+        }
+
+        return Ok(-1);
+    }
+
+    fn add_upvalue(&mut self, index: u8, is_local: bool, depth: usize) -> Result<u8, LoxError> {
+        let upvalue_count = self.functions[depth].upvalue_count;
+
+        for i in 0..upvalue_count as usize {
+            let upvalue = self.upvalues[depth][i];
+            if upvalue.index == index && upvalue.is_local == is_local {
+                return Ok(i as u8);
+            }
+        }
+
+        if upvalue_count == U8_COUNT {
+            self.error("Too many closure variables in function.");
+        }
+
+        self.upvalues[depth].push(Upvalue { index, is_local });
+        self.functions[depth].upvalue_count += 1;
+        Ok(self.functions[depth].upvalue_count as u8 - 1)
     }
 
     fn and_(&mut self, _: bool) -> Result<(), LoxError> {
@@ -668,7 +739,7 @@ impl<'s> Compiler<'s> {
         if self.scope_depth == 0 {
             return;
         }
-        self.locals.last_mut().unwrap().depth = self.scope_depth as isize;
+        self.locals.last_mut().unwrap().last_mut().unwrap().depth = self.scope_depth as isize;
     }
 
     // Errors

@@ -133,6 +133,7 @@ pub struct ObjFunction {
     pub chunk: Chunk,
     pub name: Option<String>,
     pub ty: FunctionType,
+    pub upvalue_count: usize,
 }
 
 impl ObjFunction {
@@ -142,6 +143,7 @@ impl ObjFunction {
             chunk: Chunk::new(),
             name: None,
             ty: FunctionType::Script,
+            upvalue_count: 0,
         }
     }
 
@@ -151,6 +153,7 @@ impl ObjFunction {
             chunk: Chunk::new(),
             name: Some(name.into()),
             ty: FunctionType::Function,
+            upvalue_count: 0,
         }
     }
 }

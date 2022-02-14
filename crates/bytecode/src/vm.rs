@@ -17,28 +17,34 @@ const STACK_MAX: usize = 64 * FRAME_MAX;
 
 #[derive(Debug)]
 struct CallFrame<'f> {
-    function: ObjFunction,
+    closure: ObjClosure,
     ip: usize,
     slot_top: usize,
     slots: &'f [Cell<Value>],
 }
 
 impl CallFrame<'_> {
-    fn read_byte(&mut self) -> u8 {
-        let b = self.function.chunk.code[self.ip];
+    fn read_byte(&mut self, heap: &Heap<Obj>) -> u8 {
+        let function = heap[self.closure.function].as_function();
+
+        let b = function.chunk.code[self.ip];
         self.ip += 1;
         b
     }
 
-    fn read_u16(&mut self) -> u16 {
+    fn read_u16(&mut self, heap: &Heap<Obj>) -> u16 {
+        let function = heap[self.closure.function].as_function();
+
         self.ip += 2;
         let i = self.ip;
-        (self.function.chunk.code[i - 2] as u16) << 8 | self.function.chunk.code[i - 1] as u16
+        (function.chunk.code[i - 2] as u16) << 8 | function.chunk.code[i - 1] as u16
     }
 
-    fn read_constant(&mut self) -> Value {
-        let byte = Self::read_byte(self) as usize;
-        self.function.chunk.constants[byte]
+    fn read_constant(&mut self, heap: &Heap<Obj>) -> Value {
+        let function = heap[self.closure.function].as_function();
+
+        let byte = Self::read_byte(self, heap) as usize;
+        function.chunk.constants[byte]
     }
 
     fn binary_op<F>(&mut self, f: F)
@@ -85,8 +91,14 @@ impl Vm {
 
     pub fn interpret<S: Write>(&mut self, source: &str, stream: &mut S) -> Result<(), LoxError> {
         let function = Compiler::new(source, &mut self.heap).compile()?;
+        let function_value = Value::Obj(Obj::alloc_function(&mut self.heap, function));
+        self.stack[1] = Cell::new(function_value);
 
-        let value = Value::Obj(Obj::alloc_function(&mut self.heap, function));
+        let closure = ObjClosure {
+            function: function_value.as_obj(),
+            upvalues: Vec::new(),
+        };
+        let value = Value::Obj(Obj::alloc_closure(&mut self.heap, closure));
         self.stack[0] = Cell::new(value);
 
         self.run(stream)
@@ -94,11 +106,11 @@ impl Vm {
 
     fn run<S: Write>(&mut self, stream: &mut S) -> Result<(), LoxError> {
         let mut frames = vec![CallFrame {
-            function: self
+            closure: self
                 .heap
                 .get(self.stack[0].get().as_obj())
                 .unwrap()
-                .as_function()
+                .as_closure()
                 .clone(),
             ip: 0,
             slot_top: 1,
@@ -124,9 +136,9 @@ impl Vm {
                 eprintln!("{}", frame.function.chunk.debug_op(ip, &op, &self.heap));
             }
 
-            match frame.read_byte().into() {
+            match frame.read_byte(&self.heap).into() {
                 OpConstant => {
-                    let value = frame.read_constant();
+                    let value = frame.read_constant(&self.heap);
                     frame.push(value);
                 }
                 OpNil => frame.push(Value::Nil),
@@ -136,14 +148,14 @@ impl Vm {
                     frame.pop();
                 }
                 OpGetLocal => {
-                    let v = frame.slots[frame.read_byte() as usize].get();
+                    let v = frame.slots[frame.read_byte(&self.heap) as usize].get();
                     frame.push(v);
                 }
                 OpSetLocal => {
-                    frame.slots[frame.read_byte() as usize].set(frame.peek(0));
+                    frame.slots[frame.read_byte(&self.heap) as usize].set(frame.peek(0));
                 }
                 OpGetGlobal => {
-                    let name = self.heap[frame.read_constant().as_obj()].as_string();
+                    let name = self.heap[frame.read_constant(&self.heap).as_obj()].as_string();
                     match self.globals.get(name) {
                         Some(v) => {
                             let v = v.clone();
@@ -151,28 +163,28 @@ impl Vm {
                         }
                         None => {
                             let msg = format!("Undefined variable '{}'.", name);
-                            return Self::runtime_error(msg, &frames);
+                            return self.runtime_error(msg, &frames);
                         }
                     }
                 }
                 OpDefineGlobal => {
-                    let name = self.heap[frame.read_constant().as_obj()].as_string();
+                    let name = self.heap[frame.read_constant(&self.heap).as_obj()].as_string();
                     self.globals.insert(name.to_owned(), frame.peek(0));
                     frame.pop();
                 }
                 OpSetGlobal => {
-                    let name = self.heap[frame.read_constant().as_obj()].as_string();
+                    let name = self.heap[frame.read_constant(&self.heap).as_obj()].as_string();
                     let _v = frame.peek(0);
                     match self.globals.get_mut(name) {
                         Some(v) => *v = _v,
                         None => {
                             let msg = format!("Undefined variable '{}'.", name);
-                            return Self::runtime_error(msg, &frames);
+                            return self.runtime_error(msg, &frames);
                         }
                     }
                 }
-                OpGetUpValue => (),
-                OpSetUpValue => (),
+                OpGetUpValue => {}
+                OpSetUpValue => {}
                 OpEqual => {
                     let b = frame.pop();
                     let a = frame.pop();
@@ -188,7 +200,7 @@ impl Vm {
                     }
                     (Value::Obj(a), Value::Obj(b)) => {
                         if !self.heap[a].is_string() || !self.heap[b].is_string() {
-                            return Self::runtime_error("Operands must be two strings.", &frames);
+                            return self.runtime_error("Operands must be two strings.", &frames);
                         }
                         frame.pop();
                         frame.pop();
@@ -196,10 +208,8 @@ impl Vm {
                         frame.push(Value::Obj(Obj::alloc_string(&mut self.heap, s)))
                     }
                     _ => {
-                        return Self::runtime_error(
-                            "Operands must be two numbers or two strings.",
-                            &frames,
-                        )
+                        return self
+                            .runtime_error("Operands must be two numbers or two strings.", &frames)
                     }
                 },
                 OpSubtract => frame.binary_op(|a, b| Value::Number(a - b)),
@@ -214,56 +224,59 @@ impl Vm {
                         let v = Value::Number(-frame.pop().as_number());
                         frame.push(v)
                     }
-                    _ => return Self::runtime_error("Operand must be a number.", &frames),
+                    _ => return self.runtime_error("Operand must be a number.", &frames),
                 },
                 OpPrint => {
                     writeln!(stream, "{}", frame.pop().print(&self.heap))
                         .expect("Error writing to stream.");
                 }
                 OpJump => {
-                    let offset = frame.read_u16();
+                    let offset = frame.read_u16(&self.heap);
                     frame.ip += offset as usize;
                 }
                 OpJumpIfFalse => {
-                    let offset = frame.read_u16();
+                    let offset = frame.read_u16(&self.heap);
                     if frame.peek(0).is_falsey() {
                         frame.ip += offset as usize;
                     }
                 }
                 OpLoop => {
-                    let offset = frame.read_u16();
+                    let offset = frame.read_u16(&self.heap);
                     frame.ip -= offset as usize;
                 }
                 OpCall => {
-                    let arg_count = frame.read_byte() as usize;
+                    let arg_count = frame.read_byte(&self.heap) as usize;
                     self.call_value(frame.peek(arg_count), arg_count, &mut frames)?;
                     frame = frames.last_mut().unwrap();
                 }
                 OpClosure => {
-                    let function = frame.read_constant().as_obj();
-                    let closure = ObjClosure { function };
+                    let function = frame.read_constant(&self.heap).as_obj();
+                    let closure = ObjClosure {
+                        function,
+                        upvalues: Vec::new(),
+                    };
                     let value = Value::Obj(Obj::alloc_closure(&mut self.heap, closure));
                     frame.push(value);
 
-                    let closure = self.heap.get(frame.peek(0).as_obj()).unwrap().as_closure();
-                    for i in 0..closure.upvalues.len() {
-                        let is_local = frame.read_byte() != 0;
-                        let index = frame.read_byte() as usize;
+                    // let closure = self.heap.get(frame.peek(0).as_obj()).unwrap().as_closure();
+                    // for i in 0..closure.upvalues.len() {
+                    //     let is_local = frame.read_byte() != 0;
+                    //     let index = frame.read_byte() as usize;
 
-                        if is_local {
-                            let value_ptr: *mut Value = &mut value!(index);
-                            let upvalue = self.capture_upvalue(value_ptr, out_stream);
-                            self.peek(0).as_closure().upvalues[i] = upvalue;
-                        } else {
-                            self.peek(0).as_closure().upvalues[i] =
-                                unsafe { (*(*frame).closure).as_closure().upvalues[index] }
-                        }
-                    }
+                    //     if is_local {
+                    //         let value_ptr: *mut Value = &mut value!(index);
+                    //         let upvalue = self.capture_upvalue(value_ptr, out_stream);
+                    //         self.peek(0).as_closure().upvalues[i] = upvalue;
+                    //     } else {
+                    //         self.peek(0).as_closure().upvalues[i] =
+                    //             unsafe { (*(*frame).closure).as_closure().upvalues[index] }
+                    //     }
+                    // }
                 }
                 OpCloseUpvalue => {
-                    let ptr: *mut Value = &mut self.stack[self.stack_top - 1];
-                    self.close_upvalues(ptr);
-                    self.pop();
+                    // let ptr: *mut Value = &mut self.stack[self.stack_top - 1];
+                    // self.close_upvalues(ptr);
+                    // self.pop();
                 }
                 OpReturn => {
                     let result = frame.pop();
@@ -286,8 +299,8 @@ impl Vm {
     ) -> Result<(), LoxError> {
         match callee {
             Value::Obj(o) => match &self.heap[o].value {
-                ObjType::Function(f) => {
-                    self.call(f, arg_count, frames)?;
+                ObjType::Closure(closure) => {
+                    self.call(closure, arg_count, frames)?;
                     return Ok(());
                 }
                 ObjType::Native(n) => {
@@ -300,30 +313,31 @@ impl Vm {
             },
             _ => (),
         };
-        Self::runtime_error("Can only call functions and classes.", frames)
+        self.runtime_error("Can only call functions and classes.", frames)
     }
 
     fn call(
         &self,
-        function: &ObjFunction,
+        closure: &ObjClosure,
         arg_count: usize,
         frames: &mut Vec<CallFrame<'_>>,
     ) -> Result<(), LoxError> {
+        let function = self.heap[closure.function].as_function();
         if arg_count != function.arity {
             let msg = format!(
                 "Expected {} arguments but got {}.",
                 function.arity, arg_count
             );
-            return Self::runtime_error(msg, frames);
+            return self.runtime_error(msg, frames);
         }
 
         if frames.len() == FRAME_MAX {
-            return Self::runtime_error("stack overflow", frames);
+            return self.runtime_error("stack overflow", frames);
         }
 
         let prev = frames.last_mut().unwrap();
         let frame = CallFrame {
-            function: function.clone(),
+            closure: closure.clone(),
             ip: 0,
             slot_top: arg_count + 1,
             slots: &prev.slots[prev.slot_top - arg_count - 1..],
@@ -336,6 +350,7 @@ impl Vm {
     }
 
     fn runtime_error<M: Into<String>>(
+        &self,
         message: M,
         frames: &[CallFrame<'_>],
     ) -> Result<(), LoxError> {
@@ -343,9 +358,10 @@ impl Vm {
 
         for f in frames.iter().rev() {
             let instr = f.ip - 1;
-            let line = f.function.chunk.lines[instr];
+            let function = self.heap[f.closure.function].as_function();
+            let line = function.chunk.lines[instr];
 
-            if let Some(name) = &f.function.name {
+            if let Some(name) = &function.name {
                 msg.push_str(&format!("[line {}] in {}\n", line, name));
             } else {
                 msg.push_str(&format!("[line {}] in <script>\n", line));
