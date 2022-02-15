@@ -315,10 +315,10 @@ impl<'s> Compiler<'s> {
     }
 
     fn named_variable(&mut self, name: Token, can_assign: bool) -> Result<(), LoxError> {
-        let mut arg = self.resolve_local(name, self.scope_depth)?;
+        let mut arg = self.resolve_local(name, self.locals.len() - 1)?;
         let (get_op, set_op) = match arg {
             v if v != -1 => (OpCode::OpGetLocal, OpCode::OpSetLocal),
-            _ => match self.resolve_upvalue(name, self.scope_depth)? {
+            _ => match self.resolve_upvalue(name, self.locals.len() - 1)? {
                 -1 => {
                     arg = self.identifier_constant(name) as i8;
                     (OpCode::OpGetGlobal, OpCode::OpSetGlobal)
@@ -528,9 +528,9 @@ impl<'s> Compiler<'s> {
     fn end_scope(&mut self) {
         self.scope_depth -= 1;
 
-        for _ in 0..self.locals.last().unwrap().len() {
-            self.emit_byte(OpCode::OpPop);
-        }
+        // for _ in 0..self.locals.last().unwrap().len() {
+        //     self.emit_byte(OpCode::OpPop);
+        // }
     }
 
     fn end_compiler(&mut self) -> ObjFunction {
@@ -673,7 +673,7 @@ impl<'s> Compiler<'s> {
     }
 
     fn resolve_upvalue(&mut self, name: Token, depth: usize) -> Result<i8, LoxError> {
-        if depth == 1 {
+        if depth <= 1 {
             return Ok(-1);
         }
 

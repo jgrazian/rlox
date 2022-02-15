@@ -121,6 +121,7 @@ impl Vm {
         loop {
             #[cfg(feature = "debug_trace_execution")]
             {
+                let function = self.heap[frame.closure.function].as_function();
                 eprint!("          ");
                 let end = self
                     .stack
@@ -132,8 +133,8 @@ impl Vm {
                     .for_each(|v| eprint!("[ {:>3} ]", v.get().print(&self.heap)));
                 eprint!("\n");
                 let ip = frame.ip;
-                let op = frame.function.chunk.code[ip].into();
-                eprintln!("{}", frame.function.chunk.debug_op(ip, &op, &self.heap));
+                let op = function.chunk.code[ip].into();
+                eprintln!("{}", function.chunk.debug_op(ip, &op, &self.heap).1);
             }
 
             match frame.read_byte(&self.heap).into() {
@@ -183,8 +184,6 @@ impl Vm {
                         }
                     }
                 }
-                OpGetUpValue => {}
-                OpSetUpValue => {}
                 OpEqual => {
                     let b = frame.pop();
                     let a = frame.pop();
@@ -287,6 +286,8 @@ impl Vm {
                     frame = frames.last_mut().unwrap();
                     frame.push(result);
                 }
+                OpGetUpValue => {}
+                OpSetUpValue => {}
             }
         }
     }
