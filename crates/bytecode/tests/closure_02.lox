@@ -1,13 +1,10 @@
-fun makeClosure(value) {
-  fun closure() {
-    print value;
+fun outer() {
+  var x = "outside";
+  fun inner() {
+    print x;
   }
-  return closure;
+  inner();
 }
+outer();
 
-var doughnut = makeClosure("doughnut");
-var bagel = makeClosure("bagel");
-/// doughnut
-doughnut();
-/// bagel
-bagel();
+/// outside

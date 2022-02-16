@@ -11,6 +11,7 @@ pub enum ObjType {
     Function(ObjFunction),
     Native(ObjNative),
     Closure(ObjClosure),
+    Upvalue(ObjUpvalue),
 }
 
 impl Default for ObjType {
@@ -27,6 +28,7 @@ impl Debug for ObjType {
             ObjType::Function(fun) => write!(f, "{:?}", fun),
             ObjType::Native(..) => write!(f, "fn<native>"),
             ObjType::Closure(c) => write!(f, "{:?}", c),
+            ObjType::Upvalue(..) => write!(f, "upvalue"),
         }
     }
 }
@@ -68,6 +70,13 @@ impl Obj {
         index
     }
 
+    pub fn alloc_upvalue(heap: &mut Heap<Self>, upvalue: ObjUpvalue) -> usize {
+        let index = heap.push(Obj {
+            value: ObjType::Upvalue(upvalue),
+        });
+        index
+    }
+
     pub fn as_string(&self) -> &String {
         match &self.value {
             ObjType::String(s) => s,
@@ -86,6 +95,27 @@ impl Obj {
         match &self.value {
             ObjType::Closure(c) => c,
             _ => panic!("Expected closure"),
+        }
+    }
+
+    pub fn as_closure_mut(&mut self) -> &mut ObjClosure {
+        match &mut self.value {
+            ObjType::Closure(c) => c,
+            _ => panic!("Expected closure"),
+        }
+    }
+
+    pub fn as_upvalue(&self) -> &ObjUpvalue {
+        match &self.value {
+            ObjType::Upvalue(u) => u,
+            _ => panic!("Expected upvalue"),
+        }
+    }
+
+    pub fn as_upvalue_mut(&mut self) -> &mut ObjUpvalue {
+        match &mut self.value {
+            ObjType::Upvalue(u) => u,
+            _ => panic!("Expected upvalue"),
         }
     }
 
@@ -111,6 +141,7 @@ impl fmt::Display for Obj {
             ObjType::Native(..) => write!(f, "<fn native>"),
             ObjType::Closure(c) => fmt::Display::fmt(&format!("<closure {}>", c.function), f),
             ObjType::Null => fmt::Display::fmt("null", f),
+            ObjType::Upvalue(..) => write!(f, "upvalue"),
         }
     }
 }
@@ -162,6 +193,25 @@ impl ObjFunction {
 pub struct ObjClosure {
     pub function: usize,
     pub upvalues: Vec<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum UpvalueState {
+    Open(usize),
+    Closed(Value),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct ObjUpvalue {
+    pub state: UpvalueState,
+}
+
+impl Default for ObjUpvalue {
+    fn default() -> Self {
+        Self {
+            state: UpvalueState::Open(0),
+        }
+    }
 }
 
 pub struct ObjNative {

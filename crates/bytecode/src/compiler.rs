@@ -48,6 +48,7 @@ struct ParseRule<'s> {
 struct Local<'s> {
     name: Token<'s>,
     depth: isize,
+    is_captured: bool,
 }
 
 #[derive(Debug, Default, Clone, Copy)]
@@ -91,6 +92,7 @@ impl<'s> Compiler<'s> {
         compiler.locals.push(vec![Local {
             name: Token::default(),
             depth: 0,
+            is_captured: false,
         }]);
         compiler.upvalues.push(vec![]);
         compiler
@@ -400,6 +402,7 @@ impl<'s> Compiler<'s> {
         self.locals.push(vec![Local {
             name: self.previous,
             depth: self.scope_depth as isize,
+            is_captured: false,
         }]);
         self.upvalues.push(vec![]);
         self.begin_scope();
@@ -529,7 +532,13 @@ impl<'s> Compiler<'s> {
         self.scope_depth -= 1;
 
         for i in 0..self.locals.last().unwrap().len() {
-            if self.locals.last().unwrap()[i].depth > self.scope_depth as isize {
+            let local = self.locals.last().unwrap()[i];
+            if local.depth <= self.scope_depth as isize {
+                break;
+            }
+            if local.is_captured {
+                self.emit_byte(OpCode::OpCloseUpvalue);
+            } else {
                 self.emit_byte(OpCode::OpPop);
             }
         }
@@ -619,10 +628,11 @@ impl<'s> Compiler<'s> {
             }
         }
 
-        self.locals
-            .last_mut()
-            .unwrap()
-            .push(Local { name, depth: -1 });
+        self.locals.last_mut().unwrap().push(Local {
+            name,
+            depth: -1,
+            is_captured: false,
+        });
         Ok(())
     }
 
@@ -682,7 +692,7 @@ impl<'s> Compiler<'s> {
         // TODO: This local lookup is probably wrong
         let local = self.resolve_local(name, depth - 1)?;
         if local != -1 {
-            // self.locals[local as usize].is_captured = true;
+            self.locals[depth - 1][local as usize].is_captured = true;
             return self.add_upvalue(local as u8, true, depth).map(|v| v as i8);
         }
 

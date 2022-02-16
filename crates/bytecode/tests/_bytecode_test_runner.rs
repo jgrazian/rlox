@@ -50,3 +50,4 @@ test_file!(test_do_closure_01, "tests/closure_01.lox");
 test_file!(test_do_closure_02, "tests/closure_02.lox");
 test_file!(test_do_closure_03, "tests/closure_03.lox");
 test_file!(test_do_closure_04, "tests/closure_04.lox");
+test_file!(test_do_closure_05, "tests/closure_05.lox");

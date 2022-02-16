@@ -1,6 +1,7 @@
 use std::cell::Cell;
-use std::collections::HashMap;
+use std::collections::{BinaryHeap, HashMap};
 use std::io::Write;
+use std::ops::RangeBounds;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[allow(unused_imports)]
@@ -9,7 +10,7 @@ use crate::chunk::OpCode::*;
 use crate::compiler::Compiler;
 use crate::error::LoxError;
 use crate::heap::Heap;
-use crate::object::{Obj, ObjClosure, ObjFunction, ObjType};
+use crate::object::{Obj, ObjClosure, ObjType, ObjUpvalue, UpvalueState};
 use crate::value::Value;
 
 const FRAME_MAX: usize = 64;
@@ -19,6 +20,7 @@ const STACK_MAX: usize = 64 * FRAME_MAX;
 struct CallFrame<'f> {
     closure: ObjClosure,
     ip: usize,
+    global_slot_base: usize,
     slot_top: usize,
     slots: &'f [Cell<Value>],
 }
@@ -75,6 +77,7 @@ pub struct Vm {
     stack: Vec<Cell<Value>>,
     heap: Heap<Obj>,
     globals: HashMap<String, Value>,
+    open_upvalues: BinaryHeap<(usize, usize)>, // (slot, heap_index)
 }
 
 impl Vm {
@@ -83,6 +86,7 @@ impl Vm {
             stack: vec![Cell::new(Value::Nil); STACK_MAX],
             heap: Heap::new(),
             globals: HashMap::new(),
+            open_upvalues: BinaryHeap::new(),
         };
 
         vm.define_native("clock", clock_native);
@@ -113,6 +117,7 @@ impl Vm {
                 .as_closure()
                 .clone(),
             ip: 0,
+            global_slot_base: 0,
             slot_top: 1,
             slots: &self.stack[0..],
         }];
@@ -184,6 +189,30 @@ impl Vm {
                         }
                     }
                 }
+                OpGetUpvalue => {
+                    let slot = frame.read_byte(&self.heap);
+                    let value = match self.heap[frame.closure.upvalues[slot as usize]]
+                        .as_upvalue()
+                        .state
+                    {
+                        UpvalueState::Open(location) => self.stack[location].get(),
+                        UpvalueState::Closed(value) => value,
+                    };
+                    frame.push(value);
+                }
+                OpSetUpvalue => {
+                    let slot = frame.read_byte(&self.heap);
+                    match self
+                        .heap
+                        .get_mut(frame.closure.upvalues[slot as usize])
+                        .unwrap()
+                        .as_upvalue_mut()
+                        .state
+                    {
+                        UpvalueState::Open(location) => self.stack[location].set(frame.peek(0)),
+                        UpvalueState::Closed(ref mut value) => *value = frame.peek(0),
+                    }
+                }
                 OpEqual => {
                     let b = frame.pop();
                     let a = frame.pop();
@@ -250,35 +279,57 @@ impl Vm {
                 }
                 OpClosure => {
                     let function = frame.read_constant(&self.heap).as_obj();
+                    let upvalue_count = self.heap[function].as_function().upvalue_count;
+
                     let closure = ObjClosure {
                         function,
-                        upvalues: Vec::new(),
+                        upvalues: vec![0; upvalue_count],
                     };
                     let value = Value::Obj(Obj::alloc_closure(&mut self.heap, closure));
                     frame.push(value);
 
-                    // let closure = self.heap.get(frame.peek(0).as_obj()).unwrap().as_closure();
-                    // for i in 0..closure.upvalues.len() {
-                    //     let is_local = frame.read_byte() != 0;
-                    //     let index = frame.read_byte() as usize;
+                    for i in 0..upvalue_count {
+                        let is_local = frame.read_byte(&self.heap) != 0;
+                        let index = frame.read_byte(&self.heap) as usize;
 
-                    //     if is_local {
-                    //         let value_ptr: *mut Value = &mut value!(index);
-                    //         let upvalue = self.capture_upvalue(value_ptr, out_stream);
-                    //         self.peek(0).as_closure().upvalues[i] = upvalue;
-                    //     } else {
-                    //         self.peek(0).as_closure().upvalues[i] =
-                    //             unsafe { (*(*frame).closure).as_closure().upvalues[index] }
-                    //     }
-                    // }
+                        if is_local {
+                            let upvalue_ptr = Self::capture_upvalue(
+                                &mut self.heap,
+                                &mut self.open_upvalues,
+                                frame.global_slot_base + index,
+                            );
+                            self.heap
+                                .get_mut(frame.peek(0).as_obj())
+                                .unwrap()
+                                .as_closure_mut()
+                                .upvalues[i] = upvalue_ptr;
+                        } else {
+                            self.heap
+                                .get_mut(frame.peek(0).as_obj())
+                                .unwrap()
+                                .as_closure_mut()
+                                .upvalues[i] = frame.closure.upvalues[index];
+                        }
+                    }
                 }
                 OpCloseUpvalue => {
-                    // let ptr: *mut Value = &mut self.stack[self.stack_top - 1];
-                    // self.close_upvalues(ptr);
-                    // self.pop();
+                    dbg!("asdasdads");
+                    Self::close_upvalues(
+                        &self.stack,
+                        &mut self.heap,
+                        &self.open_upvalues,
+                        frame.global_slot_base + frame.slot_top - 1,
+                    );
+                    frame.pop();
                 }
                 OpReturn => {
                     let result = frame.pop();
+                    Self::close_upvalues(
+                        &self.stack,
+                        &mut self.heap,
+                        &self.open_upvalues,
+                        frame.global_slot_base,
+                    );
                     frames.pop();
                     if frames.is_empty() {
                         return Ok(());
@@ -286,8 +337,6 @@ impl Vm {
                     frame = frames.last_mut().unwrap();
                     frame.push(result);
                 }
-                OpGetUpValue => {}
-                OpSetUpValue => {}
             }
         }
     }
@@ -340,6 +389,7 @@ impl Vm {
         let frame = CallFrame {
             closure: closure.clone(),
             ip: 0,
+            global_slot_base: prev.global_slot_base + prev.slot_top - arg_count - 1,
             slot_top: arg_count + 1,
             slots: &prev.slots[prev.slot_top - arg_count - 1..],
         };
@@ -381,6 +431,49 @@ impl Vm {
         self.stack[0] = Cell::new(value);
         self.globals.insert(name.into(), self.stack[0].get());
         self.stack[0] = Cell::new(Value::Nil);
+    }
+
+    fn capture_upvalue(
+        heap: &mut Heap<Obj>,
+        open_upvalues: &mut BinaryHeap<(usize, usize)>,
+        local: usize,
+    ) -> usize {
+        for (location, upvalue_ptr) in open_upvalues.iter() {
+            if location < &local {
+                break;
+            }
+            if location == &local {
+                return *upvalue_ptr;
+            }
+        }
+
+        let upvalue_ptr = Obj::alloc_upvalue(
+            heap,
+            ObjUpvalue {
+                state: UpvalueState::Open(local),
+            },
+        );
+        open_upvalues.push((local, upvalue_ptr));
+        upvalue_ptr
+    }
+
+    fn close_upvalues(
+        stack: &Vec<Cell<Value>>,
+        heap: &mut Heap<Obj>,
+        open_upvalues: &BinaryHeap<(usize, usize)>,
+        last: usize,
+    ) {
+        dbg!(&heap);
+        for (location, upvalue_ptr) in open_upvalues.iter() {
+            if location < &last {
+                break;
+            }
+            heap[*upvalue_ptr] = Obj {
+                value: ObjType::Upvalue(ObjUpvalue {
+                    state: UpvalueState::Closed(stack[*location].get()),
+                }),
+            };
+        }
     }
 }
 
