@@ -28,7 +28,7 @@ impl Debug for ObjType {
             ObjType::Function(fun) => write!(f, "{:?}", fun),
             ObjType::Native(..) => write!(f, "fn<native>"),
             ObjType::Closure(c) => write!(f, "{:?}", c),
-            ObjType::Upvalue(..) => write!(f, "upvalue"),
+            ObjType::Upvalue(v) => write!(f, "{:?}", v),
         }
     }
 }

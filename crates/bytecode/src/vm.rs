@@ -1,7 +1,6 @@
 use std::cell::Cell;
 use std::collections::{BinaryHeap, HashMap};
 use std::io::Write;
-use std::ops::RangeBounds;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[allow(unused_imports)]
@@ -313,11 +312,10 @@ impl Vm {
                     }
                 }
                 OpCloseUpvalue => {
-                    dbg!("asdasdads");
                     Self::close_upvalues(
                         &self.stack,
                         &mut self.heap,
-                        &self.open_upvalues,
+                        &mut self.open_upvalues,
                         frame.global_slot_base + frame.slot_top - 1,
                     );
                     frame.pop();
@@ -327,7 +325,7 @@ impl Vm {
                     Self::close_upvalues(
                         &self.stack,
                         &mut self.heap,
-                        &self.open_upvalues,
+                        &mut self.open_upvalues,
                         frame.global_slot_base,
                     );
                     frames.pop();
@@ -460,19 +458,23 @@ impl Vm {
     fn close_upvalues(
         stack: &Vec<Cell<Value>>,
         heap: &mut Heap<Obj>,
-        open_upvalues: &BinaryHeap<(usize, usize)>,
+        open_upvalues: &mut BinaryHeap<(usize, usize)>,
         last: usize,
     ) {
-        dbg!(&heap);
-        for (location, upvalue_ptr) in open_upvalues.iter() {
-            if location < &last {
-                break;
+        loop {
+            match open_upvalues.peek() {
+                Some((_loc, _)) if _loc >= &last => {
+                    let (location, upvalue_ptr) = open_upvalues.pop().unwrap();
+                    heap[upvalue_ptr] = Obj {
+                        value: ObjType::Upvalue(ObjUpvalue {
+                            state: UpvalueState::Closed(stack[location].get()),
+                        }),
+                    };
+                }
+                _ => {
+                    break;
+                }
             }
-            heap[*upvalue_ptr] = Obj {
-                value: ObjType::Upvalue(ObjUpvalue {
-                    state: UpvalueState::Closed(stack[*location].get()),
-                }),
-            };
         }
     }
 }

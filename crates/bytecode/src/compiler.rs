@@ -1,7 +1,7 @@
 use crate::chunk::OpCode;
 use crate::error::LoxError;
 use crate::heap::Heap;
-use crate::object::{FunctionType, Obj, ObjClosure, ObjFunction};
+use crate::object::{FunctionType, Obj, ObjFunction};
 use crate::scanner::{Scanner, Token, TokenType};
 use crate::value::Value;
 
@@ -531,7 +531,7 @@ impl<'s> Compiler<'s> {
     fn end_scope(&mut self) {
         self.scope_depth -= 1;
 
-        for i in 0..self.locals.last().unwrap().len() {
+        for i in (0..self.locals.last().unwrap().len()).rev() {
             let local = self.locals.last().unwrap()[i];
             if local.depth <= self.scope_depth as isize {
                 break;
