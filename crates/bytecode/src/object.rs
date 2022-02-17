@@ -40,6 +40,41 @@ pub struct Obj {
 }
 
 impl Obj {
+    pub fn string(string: String) -> Self {
+        Self {
+            value: ObjType::String(string),
+            is_marked: false,
+        }
+    }
+
+    pub fn function(function: ObjFunction) -> Self {
+        Self {
+            value: ObjType::Function(function),
+            is_marked: false,
+        }
+    }
+
+    pub fn closure(closure: ObjClosure) -> Self {
+        Self {
+            value: ObjType::Closure(closure),
+            is_marked: false,
+        }
+    }
+
+    pub fn native(function: fn(usize, &[Cell<Value>]) -> Value) -> Self {
+        Obj {
+            value: ObjType::Native(ObjNative { function }),
+            is_marked: false,
+        }
+    }
+
+    pub fn upvalue(state: UpvalueState) -> Self {
+        Obj {
+            value: ObjType::Upvalue(ObjUpvalue { state }),
+            is_marked: false,
+        }
+    }
+
     pub fn alloc_string<S: Into<String>>(heap: &mut Heap, name: S) -> HeapKey {
         let index = heap.push(Obj {
             value: ObjType::String(name.into()),
