@@ -1,6 +1,6 @@
 use std::fmt;
 
-use crate::heap::Heap;
+use crate::heap::{Heap, HeapKey};
 use crate::object::{Obj, ObjType};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -8,7 +8,7 @@ pub enum Value {
     Nil,
     Bool(bool),
     Number(f64),
-    Obj(usize),
+    Obj(HeapKey),
 }
 
 impl Value {
@@ -19,7 +19,7 @@ impl Value {
         }
     }
 
-    pub fn as_obj(&self) -> usize {
+    pub fn as_obj(&self) -> HeapKey {
         match self {
             Self::Obj(o) => *o,
             _ => panic!("Value is not an object"),
@@ -33,7 +33,7 @@ impl Value {
         }
     }
 
-    pub fn print(&self, heap: &Heap<Obj>) -> String {
+    pub fn print(&self, heap: &Heap) -> String {
         match self {
             Self::Nil => "nil".to_string(),
             Self::Bool(true) => "true".to_string(),
@@ -46,7 +46,7 @@ impl Value {
         }
     }
 
-    pub fn equal(left: &Self, right: &Self, heap: &Heap<Obj>) -> bool {
+    pub fn equal(left: &Self, right: &Self, heap: &Heap) -> bool {
         match (left, right) {
             (Self::Nil, Self::Nil) => true,
             (Self::Bool(l), Self::Bool(r)) => l == r,
@@ -70,7 +70,16 @@ impl fmt::Display for Value {
             Self::Bool(true) => write!(f, "true"),
             Self::Bool(false) => write!(f, "false"),
             Self::Number(n) => write!(f, "{}", n),
-            Self::Obj(i) => write!(f, "Obj<{}>", i),
+            Self::Obj(i) => write!(f, "Obj<{}>", i.0),
+        }
+    }
+}
+
+impl Into<HeapKey> for Value {
+    fn into(self) -> HeapKey {
+        match self {
+            Self::Obj(i) => i,
+            _ => panic!("Value is not an object pointer."),
         }
     }
 }

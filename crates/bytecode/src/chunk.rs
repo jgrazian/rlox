@@ -74,7 +74,7 @@ impl Chunk {
     }
 
     #[allow(dead_code)]
-    pub fn disassemble(&self, name: &str, heap: &Heap<Obj>) {
+    pub fn disassemble(&self, name: &str, heap: &Heap) {
         eprintln!("=== {} ===", name);
 
         let mut offset = 0;
@@ -88,17 +88,12 @@ impl Chunk {
 }
 
 impl Chunk {
-    pub fn debug_op(&self, offset: usize, op: &OpCode, heap: &Heap<Obj>) -> (usize, String) {
+    pub fn debug_op(&self, offset: usize, op: &OpCode, heap: &Heap) -> (usize, String) {
         fn single_instr(name: &str) -> (usize, String) {
             (1, name.to_string())
         }
 
-        fn const_instr(
-            chunk: &Chunk,
-            name: &str,
-            offset: usize,
-            heap: &Heap<Obj>,
-        ) -> (usize, String) {
+        fn const_instr(chunk: &Chunk, name: &str, offset: usize, heap: &Heap) -> (usize, String) {
             let s = format!(
                 "{:<16} {:>4} '{}'",
                 name,

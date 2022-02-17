@@ -8,8 +8,8 @@ use crate::chunk::OpCode;
 use crate::chunk::OpCode::*;
 use crate::compiler::Compiler;
 use crate::error::LoxError;
-use crate::heap::Heap;
-use crate::object::{Obj, ObjClosure, ObjType, ObjUpvalue, UpvalueState};
+use crate::heap::{Heap, HeapKey};
+use crate::object::{Obj, ObjClosure, ObjFunction, ObjType, ObjUpvalue, UpvalueState};
 use crate::value::Value;
 
 const FRAME_MAX: usize = 64;
@@ -17,7 +17,7 @@ const STACK_MAX: usize = 64 * FRAME_MAX;
 
 #[derive(Debug)]
 struct CallFrame<'f> {
-    closure: ObjClosure,
+    closure: HeapKey,
     ip: usize,
     global_slot_base: usize,
     slot_top: usize,
@@ -25,27 +25,30 @@ struct CallFrame<'f> {
 }
 
 impl CallFrame<'_> {
-    fn read_byte(&mut self, heap: &Heap<Obj>) -> u8 {
-        let function = heap[self.closure.function].as_function();
+    fn closure<'s>(&self, heap: &'s Heap) -> &'s ObjClosure {
+        &heap[self.closure].as_closure()
+    }
 
-        let b = function.chunk.code[self.ip];
+    fn function<'s>(&self, heap: &'s Heap) -> &'s ObjFunction {
+        &heap[heap[self.closure].as_closure().function].as_function()
+    }
+
+    fn read_byte(&mut self, heap: &Heap) -> u8 {
+        let b = self.function(heap).chunk.code[self.ip];
         self.ip += 1;
         b
     }
 
-    fn read_u16(&mut self, heap: &Heap<Obj>) -> u16 {
-        let function = heap[self.closure.function].as_function();
-
+    fn read_u16(&mut self, heap: &Heap) -> u16 {
         self.ip += 2;
         let i = self.ip;
-        (function.chunk.code[i - 2] as u16) << 8 | function.chunk.code[i - 1] as u16
+        (self.function(heap).chunk.code[i - 2] as u16) << 8
+            | self.function(heap).chunk.code[i - 1] as u16
     }
 
-    fn read_constant(&mut self, heap: &Heap<Obj>) -> Value {
-        let function = heap[self.closure.function].as_function();
-
+    fn read_constant(&mut self, heap: &Heap) -> Value {
         let byte = Self::read_byte(self, heap) as usize;
-        function.chunk.constants[byte]
+        self.function(heap).chunk.constants[byte]
     }
 
     fn binary_op<F>(&mut self, f: F)
@@ -74,9 +77,9 @@ impl CallFrame<'_> {
 
 pub struct Vm {
     stack: Vec<Cell<Value>>,
-    heap: Heap<Obj>,
+    heap: Heap,
     globals: HashMap<String, Value>,
-    open_upvalues: BinaryHeap<(usize, usize)>, // (slot, heap_index)
+    open_upvalues: BinaryHeap<(usize, HeapKey)>, // (slot_index, heap_index)
 }
 
 impl Vm {
@@ -109,12 +112,7 @@ impl Vm {
 
     fn run<S: Write>(&mut self, stream: &mut S) -> Result<(), LoxError> {
         let mut frames = vec![CallFrame {
-            closure: self
-                .heap
-                .get(self.stack[0].get().as_obj())
-                .unwrap()
-                .as_closure()
-                .clone(),
+            closure: self.stack[0].get().as_obj(),
             ip: 0,
             global_slot_base: 0,
             slot_top: 1,
@@ -190,7 +188,7 @@ impl Vm {
                 }
                 OpGetUpvalue => {
                     let slot = frame.read_byte(&self.heap);
-                    let value = match self.heap[frame.closure.upvalues[slot as usize]]
+                    let value = match self.heap[frame.closure(&self.heap).upvalues[slot as usize]]
                         .as_upvalue()
                         .state
                     {
@@ -201,13 +199,8 @@ impl Vm {
                 }
                 OpSetUpvalue => {
                     let slot = frame.read_byte(&self.heap);
-                    match self
-                        .heap
-                        .get_mut(frame.closure.upvalues[slot as usize])
-                        .unwrap()
-                        .as_upvalue_mut()
-                        .state
-                    {
+                    let upvalue = frame.closure(&self.heap).upvalues[slot as usize];
+                    match self.heap[upvalue].as_upvalue_mut().state {
                         UpvalueState::Open(location) => self.stack[location].set(frame.peek(0)),
                         UpvalueState::Closed(ref mut value) => *value = frame.peek(0),
                     }
@@ -282,7 +275,7 @@ impl Vm {
 
                     let closure = ObjClosure {
                         function,
-                        upvalues: vec![0; upvalue_count],
+                        upvalues: vec![HeapKey::default(); upvalue_count],
                     };
                     let value = Value::Obj(Obj::alloc_closure(&mut self.heap, closure));
                     frame.push(value);
@@ -297,17 +290,11 @@ impl Vm {
                                 &mut self.open_upvalues,
                                 frame.global_slot_base + index,
                             );
-                            self.heap
-                                .get_mut(frame.peek(0).as_obj())
-                                .unwrap()
-                                .as_closure_mut()
-                                .upvalues[i] = upvalue_ptr;
+                            self.heap[frame.peek(0).as_obj()].as_closure_mut().upvalues[i] =
+                                upvalue_ptr;
                         } else {
-                            self.heap
-                                .get_mut(frame.peek(0).as_obj())
-                                .unwrap()
-                                .as_closure_mut()
-                                .upvalues[i] = frame.closure.upvalues[index];
+                            self.heap[frame.peek(0).as_obj()].as_closure_mut().upvalues[i] =
+                                frame.closure(&self.heap).upvalues[index];
                         }
                     }
                 }
@@ -348,7 +335,7 @@ impl Vm {
         match callee {
             Value::Obj(o) => match &self.heap[o].value {
                 ObjType::Closure(closure) => {
-                    self.call(closure, arg_count, frames)?;
+                    self.call(o, arg_count, frames)?;
                     return Ok(());
                 }
                 ObjType::Native(n) => {
@@ -366,16 +353,14 @@ impl Vm {
 
     fn call(
         &self,
-        closure: &ObjClosure,
+        closure: HeapKey,
         arg_count: usize,
         frames: &mut Vec<CallFrame<'_>>,
     ) -> Result<(), LoxError> {
-        let function = self.heap[closure.function].as_function();
-        if arg_count != function.arity {
-            let msg = format!(
-                "Expected {} arguments but got {}.",
-                function.arity, arg_count
-            );
+        let function_key = self.heap[closure].as_closure().function;
+        let arity = self.heap[function_key].as_function().arity;
+        if arg_count != arity {
+            let msg = format!("Expected {} arguments but got {}.", arity, arg_count);
             return self.runtime_error(msg, frames);
         }
 
@@ -385,7 +370,7 @@ impl Vm {
 
         let prev = frames.last_mut().unwrap();
         let frame = CallFrame {
-            closure: closure.clone(),
+            closure,
             ip: 0,
             global_slot_base: prev.global_slot_base + prev.slot_top - arg_count - 1,
             slot_top: arg_count + 1,
@@ -407,7 +392,7 @@ impl Vm {
 
         for f in frames.iter().rev() {
             let instr = f.ip - 1;
-            let function = self.heap[f.closure.function].as_function();
+            let function = f.function(&self.heap);
             let line = function.chunk.lines[instr];
 
             if let Some(name) = &function.name {
@@ -432,10 +417,10 @@ impl Vm {
     }
 
     fn capture_upvalue(
-        heap: &mut Heap<Obj>,
-        open_upvalues: &mut BinaryHeap<(usize, usize)>,
+        heap: &mut Heap,
+        open_upvalues: &mut BinaryHeap<(usize, HeapKey)>,
         local: usize,
-    ) -> usize {
+    ) -> HeapKey {
         for (location, upvalue_ptr) in open_upvalues.iter() {
             if location < &local {
                 break;
@@ -457,8 +442,8 @@ impl Vm {
 
     fn close_upvalues(
         stack: &Vec<Cell<Value>>,
-        heap: &mut Heap<Obj>,
-        open_upvalues: &mut BinaryHeap<(usize, usize)>,
+        heap: &mut Heap,
+        open_upvalues: &mut BinaryHeap<(usize, HeapKey)>,
         last: usize,
     ) {
         loop {
@@ -469,6 +454,7 @@ impl Vm {
                         value: ObjType::Upvalue(ObjUpvalue {
                             state: UpvalueState::Closed(stack[location].get()),
                         }),
+                        is_marked: false,
                     };
                 }
                 _ => {
@@ -477,6 +463,34 @@ impl Vm {
             }
         }
     }
+
+    // fn gc_mark_roots(&mut self, frames: &[CallFrame<'_>]) {
+    //     for value in self.stack.iter() {
+    //         self.gc_mark_value(value.get());
+    //     }
+
+    //     for frame in frames.iter() {
+    //         // self.gc_mark_value(frame.closure);
+    //         // for slot in frame.slots.iter() {
+    //         //     self.gc_mark_value(slot.get());
+    //         // }
+    //     }
+
+    //     self.gc_mark_table();
+    // }
+
+    fn gc_mark_value(&mut self, value: Value) {
+        match value {
+            Value::Obj(o) => self.heap.gc_mark(o),
+            _ => (),
+        }
+    }
+
+    // fn gc_mark_table(&mut self) {
+    //     for (_, value) in self.globals.iter() {
+    //         self.gc_mark_value(*value);
+    //     }
+    // }
 }
 
 fn clock_native(_arg_count: usize, _args: &[Cell<Value>]) -> Value {

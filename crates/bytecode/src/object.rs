@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::fmt::{self, Debug};
 
 use crate::chunk::Chunk;
-use crate::heap::Heap;
+use crate::heap::{Heap, HeapKey};
 use crate::value::Value;
 
 pub enum ObjType {
@@ -36,43 +36,46 @@ impl Debug for ObjType {
 #[derive(Debug, Default)]
 pub struct Obj {
     pub value: ObjType,
+    pub is_marked: bool,
 }
 
 impl Obj {
-    pub fn alloc_string<S: Into<String>>(heap: &mut Heap<Self>, name: S) -> usize {
+    pub fn alloc_string<S: Into<String>>(heap: &mut Heap, name: S) -> HeapKey {
         let index = heap.push(Obj {
             value: ObjType::String(name.into()),
+            is_marked: false,
         });
         index
     }
 
-    pub fn alloc_function(heap: &mut Heap<Self>, function: ObjFunction) -> usize {
+    pub fn alloc_function(heap: &mut Heap, function: ObjFunction) -> HeapKey {
         let index = heap.push(Obj {
             value: ObjType::Function(function),
+            is_marked: false,
         });
         index
     }
 
-    pub fn alloc_native(
-        heap: &mut Heap<Self>,
-        function: fn(usize, &[Cell<Value>]) -> Value,
-    ) -> usize {
+    pub fn alloc_native(heap: &mut Heap, function: fn(usize, &[Cell<Value>]) -> Value) -> HeapKey {
         let index = heap.push(Obj {
             value: ObjType::Native(ObjNative { function }),
+            is_marked: false,
         });
         index
     }
 
-    pub fn alloc_closure(heap: &mut Heap<Self>, closure: ObjClosure) -> usize {
+    pub fn alloc_closure(heap: &mut Heap, closure: ObjClosure) -> HeapKey {
         let index = heap.push(Obj {
             value: ObjType::Closure(closure),
+            is_marked: false,
         });
         index
     }
 
-    pub fn alloc_upvalue(heap: &mut Heap<Self>, upvalue: ObjUpvalue) -> usize {
+    pub fn alloc_upvalue(heap: &mut Heap, upvalue: ObjUpvalue) -> HeapKey {
         let index = heap.push(Obj {
             value: ObjType::Upvalue(upvalue),
+            is_marked: false,
         });
         index
     }
@@ -139,7 +142,7 @@ impl fmt::Display for Obj {
                 f,
             ),
             ObjType::Native(..) => write!(f, "<fn native>"),
-            ObjType::Closure(c) => fmt::Display::fmt(&format!("<closure {}>", c.function), f),
+            ObjType::Closure(c) => fmt::Display::fmt(&format!("<closure {}>", c.function.0), f),
             ObjType::Null => fmt::Display::fmt("null", f),
             ObjType::Upvalue(..) => write!(f, "upvalue"),
         }
@@ -191,8 +194,8 @@ impl ObjFunction {
 
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct ObjClosure {
-    pub function: usize,
-    pub upvalues: Vec<usize>,
+    pub function: HeapKey,
+    pub upvalues: Vec<HeapKey>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]

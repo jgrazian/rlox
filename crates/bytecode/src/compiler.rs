@@ -67,7 +67,7 @@ pub struct Compiler<'s> {
     previous: Token<'s>,
     current: Token<'s>,
 
-    heap: &'s mut Heap<Obj>,
+    heap: &'s mut Heap,
 
     functions: Vec<ObjFunction>,
     upvalues: Vec<Vec<Upvalue>>,
@@ -76,7 +76,7 @@ pub struct Compiler<'s> {
 }
 
 impl<'s> Compiler<'s> {
-    pub fn new(source: &'s str, heap: &'s mut Heap<Obj>) -> Self {
+    pub fn new(source: &'s str, heap: &'s mut Heap) -> Self {
         let mut compiler = Self {
             had_error: false,
             panic_mode: false,
