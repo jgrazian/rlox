@@ -1,5 +1,4 @@
 use crate::heap::Heap;
-use crate::object::Obj;
 use crate::value::Value;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]

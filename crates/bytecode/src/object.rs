@@ -2,7 +2,7 @@ use std::cell::Cell;
 use std::fmt::{self, Debug};
 
 use crate::chunk::Chunk;
-use crate::heap::{Heap, HeapKey};
+use crate::heap::HeapKey;
 use crate::value::Value;
 
 pub enum ObjType {
@@ -40,9 +40,9 @@ pub struct Obj {
 }
 
 impl Obj {
-    pub fn string(string: String) -> Self {
+    pub fn string<S: Into<String>>(string: S) -> Self {
         Self {
-            value: ObjType::String(string),
+            value: ObjType::String(string.into()),
             is_marked: false,
         }
     }
@@ -73,46 +73,6 @@ impl Obj {
             value: ObjType::Upvalue(ObjUpvalue { state }),
             is_marked: false,
         }
-    }
-
-    pub fn alloc_string<S: Into<String>>(heap: &mut Heap, name: S) -> HeapKey {
-        let index = heap.push(Obj {
-            value: ObjType::String(name.into()),
-            is_marked: false,
-        });
-        index
-    }
-
-    pub fn alloc_function(heap: &mut Heap, function: ObjFunction) -> HeapKey {
-        let index = heap.push(Obj {
-            value: ObjType::Function(function),
-            is_marked: false,
-        });
-        index
-    }
-
-    pub fn alloc_native(heap: &mut Heap, function: fn(usize, &[Cell<Value>]) -> Value) -> HeapKey {
-        let index = heap.push(Obj {
-            value: ObjType::Native(ObjNative { function }),
-            is_marked: false,
-        });
-        index
-    }
-
-    pub fn alloc_closure(heap: &mut Heap, closure: ObjClosure) -> HeapKey {
-        let index = heap.push(Obj {
-            value: ObjType::Closure(closure),
-            is_marked: false,
-        });
-        index
-    }
-
-    pub fn alloc_upvalue(heap: &mut Heap, upvalue: ObjUpvalue) -> HeapKey {
-        let index = heap.push(Obj {
-            value: ObjType::Upvalue(upvalue),
-            is_marked: false,
-        });
-        index
     }
 
     pub fn as_string(&self) -> &String {

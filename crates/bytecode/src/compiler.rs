@@ -1,4 +1,5 @@
 use crate::chunk::OpCode;
+use crate::enviroment::{InnerEnv, Mark};
 use crate::error::LoxError;
 use crate::heap::Heap;
 use crate::object::{FunctionType, Obj, ObjFunction};
@@ -39,8 +40,8 @@ impl Precedence {
 }
 
 struct ParseRule<'s> {
-    prefix: Option<fn(&mut Compiler<'s>, bool) -> Result<(), LoxError>>,
-    infix: Option<fn(&mut Compiler<'s>, bool) -> Result<(), LoxError>>,
+    prefix: Option<fn(&mut Compiler<'s>, bool, &mut InnerEnv<'s>) -> Result<(), LoxError>>,
+    infix: Option<fn(&mut Compiler<'s>, bool, &mut InnerEnv<'s>) -> Result<(), LoxError>>,
     precedence: Precedence,
 }
 
@@ -67,23 +68,24 @@ pub struct Compiler<'s> {
     previous: Token<'s>,
     current: Token<'s>,
 
-    heap: &'s mut Heap,
-
     functions: Vec<ObjFunction>,
     upvalues: Vec<Vec<Upvalue>>,
     locals: Vec<Vec<Local<'s>>>,
     scope_depth: usize,
 }
 
+impl<'s> Mark for Compiler<'s> {
+    fn mark(&self, heap: &mut Heap) {}
+}
+
 impl<'s> Compiler<'s> {
-    pub fn new(source: &'s str, heap: &'s mut Heap) -> Self {
+    pub fn new(source: &'s str) -> Self {
         let mut compiler = Self {
             had_error: false,
             panic_mode: false,
             scanner: Scanner::new(source),
             previous: Token::default(),
             current: Token::default(),
-            heap,
             functions: Vec::with_capacity(16),
             upvalues: Vec::with_capacity(8),
             locals: Vec::with_capacity(8),
@@ -98,12 +100,12 @@ impl<'s> Compiler<'s> {
         compiler
     }
 
-    pub fn compile(&mut self) -> Result<ObjFunction, LoxError> {
+    pub fn compile(&mut self, env: &mut InnerEnv<'s>) -> Result<ObjFunction, LoxError> {
         self.functions.push(ObjFunction::anon());
         self.advance()?;
 
         while !self.match_token(TokenType::Eof)? {
-            self.declaration()?;
+            self.declaration(env)?;
         }
 
         Ok(self.end_compiler())
@@ -113,13 +115,13 @@ impl<'s> Compiler<'s> {
         self.functions.last_mut().unwrap()
     }
 
-    fn declaration(&mut self) -> Result<(), LoxError> {
+    fn declaration(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         if self.match_token(TokenType::Fun)? {
-            self.fun_declaration()?;
+            self.fun_declaration(env)?;
         } else if self.match_token(TokenType::Var)? {
-            self.var_declaration()?;
+            self.var_declaration(env)?;
         } else {
-            self.statement()?;
+            self.statement(env)?;
         }
 
         if self.panic_mode {
@@ -128,11 +130,11 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn var_declaration(&mut self) -> Result<(), LoxError> {
-        let global = self.parse_variable("Expected variable name.")?;
+    fn var_declaration(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        let global = self.parse_variable("Expected variable name.", env)?;
 
         if self.match_token(TokenType::Equal)? {
-            self.expression()?;
+            self.expression(env)?;
         } else {
             self.emit_byte(OpCode::OpNil);
         }
@@ -144,39 +146,39 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn expression(&mut self) -> Result<(), LoxError> {
-        self.parse_precedence(Precedence::Assignment)
+    fn expression(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        self.parse_precedence(Precedence::Assignment, env)
     }
 
-    fn statement(&mut self) -> Result<(), LoxError> {
+    fn statement(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         if self.match_token(TokenType::Print)? {
-            self.print_statement()
+            self.print_statement(env)
         } else if self.match_token(TokenType::For)? {
-            self.for_statement()
+            self.for_statement(env)
         } else if self.match_token(TokenType::If)? {
-            self.if_statement()
+            self.if_statement(env)
         } else if self.match_token(TokenType::Return)? {
-            self.return_statement()
+            self.return_statement(env)
         } else if self.match_token(TokenType::While)? {
-            self.while_statement()
+            self.while_statement(env)
         } else if self.match_token(TokenType::LeftBrance)? {
             self.begin_scope();
-            self.block()?;
+            self.block(env)?;
             self.end_scope();
             Ok(())
         } else {
-            self.expression_statement()
+            self.expression_statement(env)
         }
     }
 
-    fn if_statement(&mut self) -> Result<(), LoxError> {
+    fn if_statement(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         self.consume(TokenType::LeftParen, "Expect '(' after 'if'.")?;
-        self.expression()?;
+        self.expression(env)?;
         self.consume(TokenType::RightParen, "Expect ')' after condition.")?;
 
         let then_jump = self.emit_jump(OpCode::OpJumpIfFalse);
         self.emit_byte(OpCode::OpPop);
-        self.statement()?;
+        self.statement(env)?;
 
         let else_jump = self.emit_jump(OpCode::OpJump);
 
@@ -184,29 +186,29 @@ impl<'s> Compiler<'s> {
         self.emit_byte(OpCode::OpPop);
 
         if self.match_token(TokenType::Else)? {
-            self.statement()?;
+            self.statement(env)?;
         }
         self.patch_jump(else_jump);
 
         Ok(())
     }
 
-    fn print_statement(&mut self) -> Result<(), LoxError> {
-        self.expression()?;
+    fn print_statement(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        self.expression(env)?;
         self.consume(TokenType::Semicolon, "Expect ';' after value.")?;
         self.emit_byte(OpCode::OpPrint);
         Ok(())
     }
 
-    fn while_statement(&mut self) -> Result<(), LoxError> {
+    fn while_statement(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         let loop_start = self.compiling_function().chunk.code.len();
         self.consume(TokenType::LeftParen, "Expect '(' after 'while'.")?;
-        self.expression()?;
+        self.expression(env)?;
         self.consume(TokenType::RightParen, "Expect ')' after condition.")?;
 
         let exit_jump = self.emit_jump(OpCode::OpJumpIfFalse);
         self.emit_byte(OpCode::OpPop);
-        self.statement()?;
+        self.statement(env)?;
         self.emit_loop(loop_start);
 
         self.patch_jump(exit_jump);
@@ -214,22 +216,22 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn for_statement(&mut self) -> Result<(), LoxError> {
+    fn for_statement(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         self.begin_scope();
 
         self.consume(TokenType::LeftParen, "Expect '(' after 'while'.")?;
         if self.match_token(TokenType::Semicolon)? {
             // No initializer.
         } else if self.match_token(TokenType::Var)? {
-            self.var_declaration()?;
+            self.var_declaration(env)?;
         } else {
-            self.expression_statement()?;
+            self.expression_statement(env)?;
         }
 
         let mut loop_start = self.compiling_function().chunk.code.len();
         let mut exit_jump = None;
         if !self.match_token(TokenType::Semicolon)? {
-            self.expression()?;
+            self.expression(env)?;
             self.consume(TokenType::Semicolon, "Expect ';' after loop condition.")?;
 
             exit_jump = Some(self.emit_jump(OpCode::OpJumpIfFalse));
@@ -239,7 +241,7 @@ impl<'s> Compiler<'s> {
         if !self.match_token(TokenType::RightParen)? {
             let body_jump = self.emit_jump(OpCode::OpJump);
             let increment_start = self.compiling_function().chunk.code.len();
-            self.expression()?;
+            self.expression(env)?;
             self.emit_byte(OpCode::OpPop);
             self.consume(TokenType::RightParen, "Expect ')' after for clauses.")?;
 
@@ -248,7 +250,7 @@ impl<'s> Compiler<'s> {
             self.patch_jump(body_jump);
         }
 
-        self.statement()?;
+        self.statement(env)?;
         self.emit_loop(loop_start);
 
         if let Some(exit_jump) = exit_jump {
@@ -260,14 +262,14 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn expression_statement(&mut self) -> Result<(), LoxError> {
-        self.expression()?;
+    fn expression_statement(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        self.expression(env)?;
         self.consume(TokenType::Semicolon, "Expect ';' after expression.")?;
         self.emit_byte(OpCode::OpPop);
         Ok(())
     }
 
-    fn return_statement(&mut self) -> Result<(), LoxError> {
+    fn return_statement(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         if self.compiling_function().ty == FunctionType::Script {
             match self.error("Cannot return from top-level code.") {
                 Some(e) => return Err(e),
@@ -278,21 +280,21 @@ impl<'s> Compiler<'s> {
         if self.match_token(TokenType::Semicolon)? {
             self.emit_return();
         } else {
-            self.expression()?;
+            self.expression(env)?;
             self.consume(TokenType::Semicolon, "Expect ';' after return value.")?;
             self.emit_byte(OpCode::OpReturn);
         }
         Ok(())
     }
 
-    fn block(&mut self) -> Result<(), LoxError> {
+    fn block(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         while !self.check_token(TokenType::RightBrace) && !self.check_token(TokenType::Eof) {
-            self.declaration()?;
+            self.declaration(env)?;
         }
         self.consume(TokenType::RightBrace, "Expect '}' after block.")
     }
 
-    fn number(&mut self, _: bool) -> Result<(), LoxError> {
+    fn number(&mut self, _: bool, _env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         let value = match self.previous.lexeme.parse::<f64>() {
             Ok(value) => value,
             Err(_) => {
@@ -302,27 +304,32 @@ impl<'s> Compiler<'s> {
         self.emit_constant(Value::Number(value))
     }
 
-    fn string(&mut self, _: bool) -> Result<(), LoxError> {
+    fn string(&mut self, _: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         let mut chars = self.previous.lexeme.chars();
         chars.next();
         chars.next_back();
-        let value = Value::Obj(Obj::alloc_string(&mut self.heap, chars.collect::<String>()));
+        let value = Value::Obj(env.alloc(Obj::string(chars.collect::<String>()), self));
         self.emit_constant(value)
     }
 
-    fn variable(&mut self, can_assign: bool) -> Result<(), LoxError> {
+    fn variable(&mut self, can_assign: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         let previous = self.previous;
-        self.named_variable(previous, can_assign)?;
+        self.named_variable(previous, can_assign, env)?;
         Ok(())
     }
 
-    fn named_variable(&mut self, name: Token, can_assign: bool) -> Result<(), LoxError> {
+    fn named_variable(
+        &mut self,
+        name: Token,
+        can_assign: bool,
+        env: &mut InnerEnv<'s>,
+    ) -> Result<(), LoxError> {
         let mut arg = self.resolve_local(name, self.functions.len() - 1)?;
         let (get_op, set_op) = match arg {
             v if v != -1 => (OpCode::OpGetLocal, OpCode::OpSetLocal),
             _ => match self.resolve_upvalue(name, self.functions.len() - 1)? {
                 -1 => {
-                    arg = self.identifier_constant(name) as i8;
+                    arg = self.identifier_constant(name, env) as i8;
                     (OpCode::OpGetGlobal, OpCode::OpSetGlobal)
                 }
                 v @ _ => {
@@ -333,7 +340,7 @@ impl<'s> Compiler<'s> {
         };
 
         if can_assign && self.match_token(TokenType::Equal)? {
-            self.expression()?;
+            self.expression(env)?;
             self.emit_bytes(set_op, arg as u8);
         } else {
             self.emit_bytes(get_op, arg as u8);
@@ -341,14 +348,14 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn grouping(&mut self, _: bool) -> Result<(), LoxError> {
-        self.expression()?;
+    fn grouping(&mut self, _: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        self.expression(env)?;
         self.consume(TokenType::RightParen, "Expect ')' after expression.")
     }
 
-    fn unary(&mut self, _: bool) -> Result<(), LoxError> {
+    fn unary(&mut self, _: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         let operator_type = self.previous.ty;
-        self.parse_precedence(Precedence::Unary)?;
+        self.parse_precedence(Precedence::Unary, env)?;
         match operator_type {
             TokenType::Bang => self.emit_byte(OpCode::OpNot),
             TokenType::Minus => self.emit_byte(OpCode::OpNegate),
@@ -357,10 +364,10 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn binary(&mut self, _: bool) -> Result<(), LoxError> {
+    fn binary(&mut self, _: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         let operator_type = self.previous.ty;
         let rule = Self::get_rule(operator_type);
-        self.parse_precedence(rule.precedence.bump())?;
+        self.parse_precedence(rule.precedence.bump(), env)?;
 
         match operator_type {
             TokenType::BangEqual => self.emit_bytes(OpCode::OpEqual, OpCode::OpNot),
@@ -378,7 +385,7 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn literal(&mut self, _: bool) -> Result<(), LoxError> {
+    fn literal(&mut self, _: bool, _env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         match self.previous.ty {
             TokenType::False => self.emit_byte(OpCode::OpFalse),
             TokenType::Nil => self.emit_byte(OpCode::OpNil),
@@ -388,15 +395,15 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn fun_declaration(&mut self) -> Result<(), LoxError> {
-        let global = self.parse_variable("Expect function name.")?;
+    fn fun_declaration(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        let global = self.parse_variable("Expect function name.", env)?;
         self.mark_initialized();
-        self.function()?;
+        self.function(env)?;
         self.define_variable(global);
         Ok(())
     }
 
-    fn function(&mut self) -> Result<(), LoxError> {
+    fn function(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         self.functions
             .push(ObjFunction::named(self.previous.lexeme));
         self.locals.push(vec![Local {
@@ -416,7 +423,7 @@ impl<'s> Compiler<'s> {
                     return Err(self.error("Cannot have more than 255 parameters."))?;
                 }
 
-                let constant = self.parse_variable("Expect parameter name.")?;
+                let constant = self.parse_variable("Expect parameter name.", env)?;
                 self.define_variable(constant);
 
                 if !self.match_token(TokenType::Comma)? {
@@ -427,12 +434,12 @@ impl<'s> Compiler<'s> {
 
         self.consume(TokenType::RightParen, "Expect ')' after parameters.")?;
         self.consume(TokenType::LeftBrance, "Expect '{' before function body.")?;
-        self.block()?;
+        self.block(env)?;
         self.end_scope();
 
         let closure = self.end_compiler();
 
-        let value = Value::Obj(Obj::alloc_function(&mut self.heap, closure));
+        let value = Value::Obj(env.alloc(Obj::function(closure), self));
         let constant = self.make_constant(value);
         self.emit_bytes(OpCode::OpClosure, constant);
 
@@ -447,17 +454,17 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn call(&mut self, _: bool) -> Result<(), LoxError> {
-        let arg_count = self.argument_list()?;
+    fn call(&mut self, _: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        let arg_count = self.argument_list(env)?;
         self.emit_bytes(OpCode::OpCall, arg_count as u8);
         Ok(())
     }
 
-    fn argument_list(&mut self) -> Result<u8, LoxError> {
+    fn argument_list(&mut self, env: &mut InnerEnv<'s>) -> Result<u8, LoxError> {
         let mut arg_count = 0;
         if !self.check_token(TokenType::RightParen) {
             loop {
-                self.expression()?;
+                self.expression(env)?;
                 if arg_count == 255 {
                     match self.error("Can't have more than 255 arguments.") {
                         Some(e) => return Err(e),
@@ -475,14 +482,18 @@ impl<'s> Compiler<'s> {
         Ok(arg_count)
     }
 
-    fn parse_precedence(&mut self, precedence: Precedence) -> Result<(), LoxError> {
+    fn parse_precedence(
+        &mut self,
+        precedence: Precedence,
+        env: &mut InnerEnv<'s>,
+    ) -> Result<(), LoxError> {
         self.advance()?;
         let can_assign;
 
         match Self::get_rule(self.previous.ty).prefix {
             Some(prefix_rule) => {
                 can_assign = precedence <= Precedence::Assignment;
-                prefix_rule(self, can_assign)?;
+                prefix_rule(self, can_assign, env)?;
             }
             None => {
                 return Err(self.error("Expect expression.").into());
@@ -492,7 +503,7 @@ impl<'s> Compiler<'s> {
         while precedence <= Self::get_rule(self.current.ty).precedence {
             self.advance()?;
             match Self::get_rule(self.previous.ty).infix {
-                Some(infix_rule) => infix_rule(self, can_assign)?,
+                Some(infix_rule) => infix_rule(self, can_assign, env)?,
                 None => {}
             }
         }
@@ -507,7 +518,11 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
-    fn parse_variable(&mut self, error_message: &str) -> Result<u8, LoxError> {
+    fn parse_variable(
+        &mut self,
+        error_message: &str,
+        env: &mut InnerEnv<'s>,
+    ) -> Result<u8, LoxError> {
         self.consume(TokenType::Identifier, error_message)?;
 
         self.declare_variable()?;
@@ -516,11 +531,11 @@ impl<'s> Compiler<'s> {
         }
 
         let previous = self.previous;
-        Ok(self.identifier_constant(previous))
+        Ok(self.identifier_constant(previous, env))
     }
 
-    fn identifier_constant(&mut self, name: Token) -> u8 {
-        let value = Value::Obj(Obj::alloc_string(&mut self.heap, name.lexeme.clone()));
+    fn identifier_constant(&mut self, name: Token, env: &mut InnerEnv<'s>) -> u8 {
+        let value = Value::Obj(env.alloc(Obj::string(name.lexeme.clone()), self));
         self.make_constant(value)
     }
 
@@ -725,24 +740,24 @@ impl<'s> Compiler<'s> {
         Ok(self.functions[depth].upvalue_count as u8 - 1)
     }
 
-    fn and_(&mut self, _: bool) -> Result<(), LoxError> {
+    fn and_(&mut self, _: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         let end_jump = self.emit_jump(OpCode::OpJumpIfFalse);
 
         self.emit_byte(OpCode::OpPop);
-        self.parse_precedence(Precedence::And)?;
+        self.parse_precedence(Precedence::And, env)?;
 
         self.patch_jump(end_jump);
         Ok(())
     }
 
-    fn or_(&mut self, _: bool) -> Result<(), LoxError> {
+    fn or_(&mut self, _: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         let else_jump = self.emit_jump(OpCode::OpJumpIfFalse);
         let end_jump = self.emit_jump(OpCode::OpJump);
 
         self.patch_jump(else_jump);
         self.emit_byte(OpCode::OpPop);
 
-        self.parse_precedence(Precedence::Or)?;
+        self.parse_precedence(Precedence::Or, env)?;
         self.patch_jump(end_jump);
         Ok(())
     }

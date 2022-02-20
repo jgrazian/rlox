@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[allow(unused_imports)]
 use crate::chunk::OpCode;
 use crate::chunk::OpCode::*;
-use crate::compiler::Compiler;
+use crate::enviroment::{InnerEnv, Mark};
 use crate::error::LoxError;
 use crate::heap::{Heap, HeapKey};
 use crate::object::{Obj, ObjClosure, ObjFunction, ObjType, ObjUpvalue, UpvalueState};
@@ -79,41 +79,47 @@ impl CallFrame {
 }
 
 pub struct Vm {
-    stack: Vec<Cell<Value>>,
-    heap: Heap,
+    pub stack: Vec<Cell<Value>>,
     globals: HashMap<String, Value>,
     open_upvalues: BinaryHeap<(usize, HeapKey)>, // (slot_index, heap_index)
 }
 
-impl Vm {
-    pub fn new() -> Self {
+impl Mark for Vm {
+    fn mark(&self, heap: &mut Heap) {}
+}
+
+impl<'h> Vm {
+    pub fn new(env: &mut InnerEnv<'h>) -> Self {
         let mut vm = Self {
             stack: vec![Cell::new(Value::Nil); STACK_MAX],
-            heap: Heap::new(),
             globals: HashMap::new(),
             open_upvalues: BinaryHeap::new(),
         };
 
-        vm.define_native("clock", clock_native);
+        vm.define_native("clock", clock_native, env);
         vm
     }
 
-    pub fn interpret<S: Write>(&mut self, source: &str, stream: &mut S) -> Result<(), LoxError> {
-        let function = Compiler::new(source, &mut self.heap).compile()?;
-        let function_value = Value::Obj(self.allocate(Obj::function(function)));
+    pub fn interpret<S: Write>(
+        &mut self,
+        function: ObjFunction,
+        stream: &mut S,
+        env: &mut InnerEnv<'h>,
+    ) -> Result<(), LoxError> {
+        let function_value = Value::Obj(env.alloc(Obj::function(function), self));
         self.stack[1] = Cell::new(function_value);
 
         let closure = ObjClosure {
             function: function_value.as_obj(),
             upvalues: Vec::new(),
         };
-        let value = Value::Obj(self.allocate(Obj::closure(closure)));
+        let value = Value::Obj(env.alloc(Obj::closure(closure), self));
         self.stack[0] = Cell::new(value);
 
-        self.run(stream)
+        self.run(stream, env)
     }
 
-    fn run<S: Write>(&mut self, stream: &mut S) -> Result<(), LoxError> {
+    fn run<S: Write>(&mut self, stream: &mut S, env: &mut InnerEnv<'h>) -> Result<(), LoxError> {
         let mut frames = vec![CallFrame {
             closure: self.stack[0].get().as_obj(),
             ip: 0,
@@ -125,7 +131,7 @@ impl Vm {
         loop {
             #[cfg(feature = "debug_trace_execution")]
             {
-                let function = self.heap[frame.closure.function].as_function();
+                let function = env.heap[frame.closure.function].as_function();
                 eprint!("          ");
                 let end = self
                     .stack
@@ -134,16 +140,16 @@ impl Vm {
                     .unwrap_or(0);
                 self.stack[0..=end]
                     .iter()
-                    .for_each(|v| eprint!("[ {:>3} ]", v.get().print(&self.heap)));
+                    .for_each(|v| eprint!("[ {:>3} ]", v.get().print(&env.heap)));
                 eprint!("\n");
                 let ip = frame.ip;
                 let op = function.chunk.code[ip].into();
-                eprintln!("{}", function.chunk.debug_op(ip, &op, &self.heap).1);
+                eprintln!("{}", function.chunk.debug_op(ip, &op, &env.heap).1);
             }
 
-            match frame.read_byte(&self.heap).into() {
+            match frame.read_byte(&env.heap).into() {
                 OpConstant => {
-                    let value = frame.read_constant(&self.heap);
+                    let value = frame.read_constant(&env.heap);
                     frame.push(&self.stack, value);
                 }
                 OpNil => frame.push(&self.stack, Value::Nil),
@@ -153,15 +159,15 @@ impl Vm {
                     frame.pop(&self.stack);
                 }
                 OpGetLocal => {
-                    let v = frame.slots(&self.stack)[frame.read_byte(&self.heap) as usize].get();
+                    let v = frame.slots(&self.stack)[frame.read_byte(&env.heap) as usize].get();
                     frame.push(&self.stack, v);
                 }
                 OpSetLocal => {
-                    frame.slots(&self.stack)[frame.read_byte(&self.heap) as usize]
+                    frame.slots(&self.stack)[frame.read_byte(&env.heap) as usize]
                         .set(frame.peek(&self.stack, 0));
                 }
                 OpGetGlobal => {
-                    let name = self.heap[frame.read_constant(&self.heap).as_obj()].as_string();
+                    let name = env.heap[frame.read_constant(&env.heap).as_obj()].as_string();
                     match self.globals.get(name) {
                         Some(v) => {
                             let v = v.clone();
@@ -169,30 +175,30 @@ impl Vm {
                         }
                         None => {
                             let msg = format!("Undefined variable '{}'.", name);
-                            return self.runtime_error(msg, &frames);
+                            return self.runtime_error(msg, &frames, env);
                         }
                     }
                 }
                 OpDefineGlobal => {
-                    let name = self.heap[frame.read_constant(&self.heap).as_obj()].as_string();
+                    let name = env.heap[frame.read_constant(&env.heap).as_obj()].as_string();
                     self.globals
                         .insert(name.to_owned(), frame.peek(&self.stack, 0));
                     frame.pop(&self.stack);
                 }
                 OpSetGlobal => {
-                    let name = self.heap[frame.read_constant(&self.heap).as_obj()].as_string();
+                    let name = env.heap[frame.read_constant(&env.heap).as_obj()].as_string();
                     let _v = frame.peek(&self.stack, 0);
                     match self.globals.get_mut(name) {
                         Some(v) => *v = _v,
                         None => {
                             let msg = format!("Undefined variable '{}'.", name);
-                            return self.runtime_error(msg, &frames);
+                            return self.runtime_error(msg, &frames, env);
                         }
                     }
                 }
                 OpGetUpvalue => {
-                    let slot = frame.read_byte(&self.heap);
-                    let value = match self.heap[frame.closure(&self.heap).upvalues[slot as usize]]
+                    let slot = frame.read_byte(&env.heap);
+                    let value = match env.heap[frame.closure(&env.heap).upvalues[slot as usize]]
                         .as_upvalue()
                         .state
                     {
@@ -202,9 +208,9 @@ impl Vm {
                     frame.push(&self.stack, value);
                 }
                 OpSetUpvalue => {
-                    let slot = frame.read_byte(&self.heap);
-                    let upvalue = frame.closure(&self.heap).upvalues[slot as usize];
-                    match self.heap[upvalue].as_upvalue_mut().state {
+                    let slot = frame.read_byte(&env.heap);
+                    let upvalue = frame.closure(&env.heap).upvalues[slot as usize];
+                    match env.heap[upvalue].as_upvalue_mut().state {
                         UpvalueState::Open(location) => {
                             self.stack[location].set(frame.peek(&self.stack, 0))
                         }
@@ -214,7 +220,7 @@ impl Vm {
                 OpEqual => {
                     let b = frame.pop(&self.stack);
                     let a = frame.pop(&self.stack);
-                    frame.push(&self.stack, Value::Bool(Value::equal(&a, &b, &self.heap)))
+                    frame.push(&self.stack, Value::Bool(Value::equal(&a, &b, &env.heap)))
                 }
                 OpGreater => frame.binary_op(&self.stack, |a, b| Value::Bool(a > b)),
                 OpLess => frame.binary_op(&self.stack, |a, b| Value::Bool(a < b)),
@@ -225,18 +231,25 @@ impl Vm {
                         frame.push(&self.stack, Value::Number(a + b));
                     }
                     (Value::Obj(a), Value::Obj(b)) => {
-                        if !self.heap[a].is_string() || !self.heap[b].is_string() {
-                            return self.runtime_error("Operands must be two strings.", &frames);
+                        if !env.heap[a].is_string() || !env.heap[b].is_string() {
+                            return self.runtime_error(
+                                "Operands must be two strings.",
+                                &frames,
+                                env,
+                            );
                         }
                         frame.pop(&self.stack);
                         frame.pop(&self.stack);
-                        let s = self.heap[b].as_string().to_owned() + self.heap[a].as_string();
-                        let value = Value::Obj(self.allocate(Obj::string(s)));
+                        let s = env.heap[b].as_string().to_owned() + env.heap[a].as_string();
+                        let value = Value::Obj(env.alloc(Obj::string(s), self));
                         frame.push(&self.stack, value)
                     }
                     _ => {
-                        return self
-                            .runtime_error("Operands must be two numbers or two strings.", &frames)
+                        return self.runtime_error(
+                            "Operands must be two numbers or two strings.",
+                            &frames,
+                            env,
+                        )
                     }
                 },
                 OpSubtract => frame.binary_op(&self.stack, |a, b| Value::Number(a - b)),
@@ -251,62 +264,67 @@ impl Vm {
                         let v = Value::Number(-frame.pop(&self.stack).as_number());
                         frame.push(&self.stack, v)
                     }
-                    _ => return self.runtime_error("Operand must be a number.", &frames),
+                    _ => return self.runtime_error("Operand must be a number.", &frames, env),
                 },
                 OpPrint => {
-                    writeln!(stream, "{}", frame.pop(&self.stack,).print(&self.heap))
+                    writeln!(stream, "{}", frame.pop(&self.stack,).print(&env.heap))
                         .expect("Error writing to stream.");
                 }
                 OpJump => {
-                    let offset = frame.read_u16(&self.heap);
+                    let offset = frame.read_u16(&env.heap);
                     frame.ip += offset as usize;
                 }
                 OpJumpIfFalse => {
-                    let offset = frame.read_u16(&self.heap);
+                    let offset = frame.read_u16(&env.heap);
                     if frame.peek(&self.stack, 0).is_falsey() {
                         frame.ip += offset as usize;
                     }
                 }
                 OpLoop => {
-                    let offset = frame.read_u16(&self.heap);
+                    let offset = frame.read_u16(&env.heap);
                     frame.ip -= offset as usize;
                 }
                 OpCall => {
-                    let arg_count = frame.read_byte(&self.heap) as usize;
-                    self.call_value(frame.peek(&self.stack, arg_count), arg_count, &mut frames)?;
+                    let arg_count = frame.read_byte(&env.heap) as usize;
+                    self.call_value(
+                        frame.peek(&self.stack, arg_count),
+                        arg_count,
+                        &mut frames,
+                        env,
+                    )?;
                     frame = frames.last_mut().unwrap();
                 }
                 OpClosure => {
-                    let function = frame.read_constant(&self.heap).as_obj();
-                    let upvalue_count = self.heap[function].as_function().upvalue_count;
+                    let function = frame.read_constant(&env.heap).as_obj();
+                    let upvalue_count = env.heap[function].as_function().upvalue_count;
 
                     let closure = ObjClosure {
                         function,
                         upvalues: vec![HeapKey::default(); upvalue_count],
                     };
-                    let value = Value::Obj(self.allocate(Obj::closure(closure)));
+                    let value = Value::Obj(env.alloc(Obj::closure(closure), self));
                     frame.push(&self.stack, value);
 
                     for i in 0..upvalue_count {
-                        let is_local = frame.read_byte(&self.heap) != 0;
-                        let index = frame.read_byte(&self.heap) as usize;
+                        let is_local = frame.read_byte(&env.heap) != 0;
+                        let index = frame.read_byte(&env.heap) as usize;
 
                         if is_local {
-                            let upvalue_ptr = self.capture_upvalue(frame.slot_base + index);
-                            self.heap[frame.peek(&self.stack, 0).as_obj()]
+                            let upvalue_ptr = self.capture_upvalue(frame.slot_base + index, env);
+                            env.heap[frame.peek(&self.stack, 0).as_obj()]
                                 .as_closure_mut()
                                 .upvalues[i] = upvalue_ptr;
                         } else {
-                            self.heap[frame.peek(&self.stack, 0).as_obj()]
+                            env.heap[frame.peek(&self.stack, 0).as_obj()]
                                 .as_closure_mut()
-                                .upvalues[i] = frame.closure(&self.heap).upvalues[index];
+                                .upvalues[i] = frame.closure(&env.heap).upvalues[index];
                         }
                     }
                 }
                 OpCloseUpvalue => {
                     Self::close_upvalues(
                         &self.stack,
-                        &mut self.heap,
+                        &mut env.heap,
                         &mut self.open_upvalues,
                         frame.slot_base + frame.slot_top - 1,
                     );
@@ -316,7 +334,7 @@ impl Vm {
                     let result = frame.pop(&self.stack);
                     Self::close_upvalues(
                         &self.stack,
-                        &mut self.heap,
+                        &mut env.heap,
                         &mut self.open_upvalues,
                         frame.slot_base,
                     );
@@ -336,11 +354,12 @@ impl Vm {
         callee: Value,
         arg_count: usize,
         frames: &mut Vec<CallFrame>,
+        env: &mut InnerEnv<'h>,
     ) -> Result<(), LoxError> {
         match callee {
-            Value::Obj(o) => match &self.heap[o].value {
+            Value::Obj(o) => match &env.heap[o].value {
                 ObjType::Closure(_closure) => {
-                    self.call(o, arg_count, frames)?;
+                    self.call(o, arg_count, frames, env)?;
                     return Ok(());
                 }
                 ObjType::Native(n) => {
@@ -353,7 +372,7 @@ impl Vm {
             },
             _ => (),
         };
-        self.runtime_error("Can only call functions and classes.", frames)
+        self.runtime_error("Can only call functions and classes.", frames, env)
     }
 
     fn call(
@@ -361,16 +380,17 @@ impl Vm {
         closure: HeapKey,
         arg_count: usize,
         frames: &mut Vec<CallFrame>,
+        env: &mut InnerEnv<'h>,
     ) -> Result<(), LoxError> {
-        let function_key = self.heap[closure].as_closure().function;
-        let arity = self.heap[function_key].as_function().arity;
+        let function_key = env.heap[closure].as_closure().function;
+        let arity = env.heap[function_key].as_function().arity;
         if arg_count != arity {
             let msg = format!("Expected {} arguments but got {}.", arity, arg_count);
-            return self.runtime_error(msg, frames);
+            return self.runtime_error(msg, frames, env);
         }
 
         if frames.len() == FRAME_MAX {
-            return self.runtime_error("stack overflow", frames);
+            return self.runtime_error("stack overflow", frames, env);
         }
 
         let prev = frames.last_mut().unwrap();
@@ -391,12 +411,13 @@ impl Vm {
         &self,
         message: M,
         frames: &[CallFrame],
+        env: &mut InnerEnv<'h>,
     ) -> Result<(), LoxError> {
         let mut msg = format!("{}\n", message.into());
 
         for f in frames.iter().rev() {
             let instr = f.ip - 1;
-            let function = f.function(&self.heap);
+            let function = f.function(&env.heap);
             let line = function.chunk.lines[instr];
 
             if let Some(name) = &function.name {
@@ -413,14 +434,15 @@ impl Vm {
         &mut self,
         name: M,
         function: fn(usize, &[Cell<Value>]) -> Value,
+        env: &mut InnerEnv<'h>,
     ) {
-        let value = Value::Obj(self.allocate(Obj::native(function)));
+        let value = Value::Obj(env.alloc(Obj::native(function), self));
         self.stack[0] = Cell::new(value);
         self.globals.insert(name.into(), self.stack[0].get());
         self.stack[0] = Cell::new(Value::Nil);
     }
 
-    fn capture_upvalue(&mut self, local: usize) -> HeapKey {
+    fn capture_upvalue(&mut self, local: usize, env: &mut InnerEnv<'h>) -> HeapKey {
         for (location, upvalue_ptr) in self.open_upvalues.iter() {
             if location < &local {
                 break;
@@ -430,7 +452,7 @@ impl Vm {
             }
         }
 
-        let upvalue_ptr = self.allocate(Obj::upvalue(UpvalueState::Open(local)));
+        let upvalue_ptr = env.alloc(Obj::upvalue(UpvalueState::Open(local)), self);
         self.open_upvalues.push((local, upvalue_ptr));
         upvalue_ptr
     }
@@ -459,40 +481,36 @@ impl Vm {
         }
     }
 
-    fn allocate(&mut self, obj: Obj) -> HeapKey {
-        self.heap.push(obj)
-    }
+    // fn gc_mark_roots(&mut self, frames: &[CallFrame]) {
+    //     for i in 0..self.stack.len() {
+    //         let value = self.stack[i].get();
+    //         self.gc_mark_value(value);
+    //     }
 
-    fn gc_mark_roots(&mut self, frames: &[CallFrame]) {
-        for i in 0..self.stack.len() {
-            let value = self.stack[i].get();
-            self.gc_mark_value(value);
-        }
+    //     for frame in frames.iter() {
+    //         env.heap.gc_mark(frame.closure);
+    //     }
 
-        for frame in frames.iter() {
-            self.heap.gc_mark(frame.closure);
-        }
+    //     for (_, upvalue) in self.open_upvalues.iter() {
+    //         env.heap.gc_mark(*upvalue);
+    //     }
 
-        for (_, upvalue) in self.open_upvalues.iter() {
-            self.heap.gc_mark(*upvalue);
-        }
+    //     self.gc_mark_table();
+    // }
 
-        self.gc_mark_table();
-    }
+    // fn gc_mark_value(&mut self, value: Value) {
+    //     match value {
+    //         Value::Obj(o) => env.heap.gc_mark(o),
+    //         _ => (),
+    //     }
+    // }
 
-    fn gc_mark_value(&mut self, value: Value) {
-        match value {
-            Value::Obj(o) => self.heap.gc_mark(o),
-            _ => (),
-        }
-    }
-
-    fn gc_mark_table(&mut self) {
-        let values = self.globals.iter().map(|(_, v)| *v).collect::<Vec<_>>();
-        for value in values {
-            self.gc_mark_value(value);
-        }
-    }
+    // fn gc_mark_table(&mut self) {
+    //     let values = self.globals.iter().map(|(_, v)| *v).collect::<Vec<_>>();
+    //     for value in values {
+    //         self.gc_mark_value(value);
+    //     }
+    // }
 }
 
 fn clock_native(_arg_count: usize, _args: &[Cell<Value>]) -> Value {

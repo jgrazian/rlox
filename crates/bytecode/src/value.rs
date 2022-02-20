@@ -1,7 +1,7 @@
 use std::fmt;
 
 use crate::heap::{Heap, HeapKey};
-use crate::object::{Obj, ObjType};
+use crate::object::ObjType;
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
