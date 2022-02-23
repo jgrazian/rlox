@@ -562,6 +562,7 @@ impl<'s> Compiler<'s> {
             } else {
                 self.emit_byte(OpCode::OpPop);
             }
+            self.locals.last_mut().unwrap().pop();
         }
     }
 
@@ -578,7 +579,7 @@ impl<'s> Compiler<'s> {
                     .last()
                     .unwrap()
                     .chunk
-                    .disassemble(&name, &self.heap);
+                    .disassemble(&name, &env.heap);
             }
         }
         let function = self.functions.last().unwrap().clone();

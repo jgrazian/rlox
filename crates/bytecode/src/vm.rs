@@ -155,7 +155,7 @@ impl<'h> Vm {
         loop {
             #[cfg(feature = "debug_trace_execution")]
             {
-                let function = env.heap[self.frame().closure.function].as_function();
+                let function = self.frame().function(&env.heap);
                 eprint!("          ");
                 let end = self
                     .stack
@@ -166,7 +166,7 @@ impl<'h> Vm {
                     .iter()
                     .for_each(|v| eprint!("[ {:>3} ]", v.get().print(&env.heap)));
                 eprint!("\n");
-                let ip = self.frame().ip;
+                let ip = self.frame().ip.get();
                 let op = function.chunk.code[ip].into();
                 eprintln!("{}", function.chunk.debug_op(ip, &op, &env.heap).1);
             }
