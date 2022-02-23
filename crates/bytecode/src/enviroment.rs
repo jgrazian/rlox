@@ -16,8 +16,14 @@ pub struct InnerEnv<'h> {
     pub heap: RefMut<'h, Heap>,
 }
 
+#[derive(Debug)]
+pub enum TargetType {
+    Compiler,
+    Vm,
+}
+
 pub trait Mark {
-    fn mark(&self, heap: &mut Heap);
+    fn mark(&self, heap: &mut Heap) -> TargetType;
 }
 
 impl<'s> Enviroment {
@@ -60,14 +66,41 @@ impl<'s> Enviroment {
             .interpret(function, stream, &mut env)
     }
 
-    pub fn alloc<'h>(&self, heap: &mut RefMut<'h, Heap>, obj: Obj) -> HeapKey {
+    pub fn alloc<'h, T: Mark>(&self, heap: &mut RefMut<'h, Heap>, obj: Obj, target: &T) -> HeapKey {
+        if cfg!(feature = "debug_stress_gc") {
+            self.collect_garbage(heap, target);
+        } else {
+            if heap.gc_should_run() {
+                self.collect_garbage(heap, target);
+            }
+        }
+
         heap.push(obj)
+    }
+
+    fn collect_garbage<'h, T: Mark>(&self, heap: &mut RefMut<'h, Heap>, target: &T) {
+        #[cfg(feature = "debug_log_gc")]
+        eprintln!("-- gc begin --");
+
+        let ty = target.mark(heap);
+        // If we allocate from the compiler we should also mark roots in the VM
+        match ty {
+            TargetType::Vm => {}
+            _ => {
+                self.vm.as_ref().unwrap().borrow().mark(heap);
+            }
+        }
+
+        heap.gc_trace_references();
+        heap.gc_sweep();
+
+        #[cfg(feature = "debug_log_gc")]
+        eprintln!("-- gc end --");
     }
 }
 
 impl<'h> InnerEnv<'h> {
     pub fn alloc<'s, T: Mark>(&mut self, obj: Obj, target: &T) -> HeapKey {
-        target.mark(&mut self.heap);
-        self.env.alloc(&mut self.heap, obj)
+        self.env.alloc(&mut self.heap, obj, target)
     }
 }

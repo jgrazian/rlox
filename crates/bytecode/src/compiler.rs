@@ -1,5 +1,5 @@
 use crate::chunk::OpCode;
-use crate::enviroment::{InnerEnv, Mark};
+use crate::enviroment::{InnerEnv, Mark, TargetType};
 use crate::error::LoxError;
 use crate::heap::Heap;
 use crate::object::{FunctionType, Obj, ObjFunction};
@@ -75,7 +75,14 @@ pub struct Compiler<'s> {
 }
 
 impl<'s> Mark for Compiler<'s> {
-    fn mark(&self, heap: &mut Heap) {}
+    fn mark(&self, heap: &mut Heap) -> TargetType {
+        for f in self.functions.iter() {
+            for v in f.chunk.constants.iter() {
+                heap.gc_mark_value(*v);
+            }
+        }
+        TargetType::Compiler
+    }
 }
 
 impl<'s> Compiler<'s> {
@@ -100,7 +107,7 @@ impl<'s> Compiler<'s> {
         compiler
     }
 
-    pub fn compile(&mut self, env: &mut InnerEnv<'s>) -> Result<ObjFunction, LoxError> {
+    pub fn compile(&mut self, env: &mut InnerEnv<'s>) -> Result<Value, LoxError> {
         self.functions.push(ObjFunction::anon());
         self.advance()?;
 
@@ -108,7 +115,7 @@ impl<'s> Compiler<'s> {
             self.declaration(env)?;
         }
 
-        Ok(self.end_compiler())
+        Ok(self.end_compiler(env))
     }
 
     fn compiling_function(&mut self) -> &mut ObjFunction {
@@ -437,10 +444,9 @@ impl<'s> Compiler<'s> {
         self.block(env)?;
         self.end_scope();
 
-        let closure = self.end_compiler();
+        let closure = self.end_compiler(env);
 
-        let value = Value::Obj(env.alloc(Obj::function(closure), self));
-        let constant = self.make_constant(value);
+        let constant = self.make_constant(closure);
         self.emit_bytes(OpCode::OpClosure, constant);
 
         for i in 0..self.upvalues.last().unwrap().len() {
@@ -559,7 +565,7 @@ impl<'s> Compiler<'s> {
         }
     }
 
-    fn end_compiler(&mut self) -> ObjFunction {
+    fn end_compiler(&mut self, env: &mut InnerEnv<'s>) -> Value {
         self.emit_return();
         #[cfg(feature = "debug_print_code")]
         {
@@ -575,7 +581,10 @@ impl<'s> Compiler<'s> {
                     .disassemble(&name, &self.heap);
             }
         }
-        self.functions.pop().unwrap()
+        let function = self.functions.last().unwrap().clone();
+        let value = Value::Obj(env.alloc(Obj::function(function), self));
+        self.functions.pop();
+        value
     }
 
     fn emit_return(&mut self) {

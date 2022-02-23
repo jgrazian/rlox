@@ -36,42 +36,42 @@ impl Debug for ObjType {
 #[derive(Debug, Default)]
 pub struct Obj {
     pub value: ObjType,
-    pub is_marked: bool,
+    pub is_marked: Cell<bool>,
 }
 
 impl Obj {
     pub fn string<S: Into<String>>(string: S) -> Self {
         Self {
             value: ObjType::String(string.into()),
-            is_marked: false,
+            is_marked: Cell::new(false),
         }
     }
 
     pub fn function(function: ObjFunction) -> Self {
         Self {
             value: ObjType::Function(function),
-            is_marked: false,
+            is_marked: Cell::new(false),
         }
     }
 
     pub fn closure(closure: ObjClosure) -> Self {
         Self {
             value: ObjType::Closure(closure),
-            is_marked: false,
+            is_marked: Cell::new(false),
         }
     }
 
     pub fn native(function: fn(usize, &[Cell<Value>]) -> Value) -> Self {
         Obj {
             value: ObjType::Native(ObjNative { function }),
-            is_marked: false,
+            is_marked: Cell::new(false),
         }
     }
 
     pub fn upvalue(state: UpvalueState) -> Self {
         Obj {
             value: ObjType::Upvalue(ObjUpvalue { state }),
-            is_marked: false,
+            is_marked: Cell::new(false),
         }
     }
 
