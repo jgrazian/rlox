@@ -123,7 +123,9 @@ impl<'s> Compiler<'s> {
     }
 
     fn declaration(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
-        if self.match_token(TokenType::Fun)? {
+        if self.match_token(TokenType::Class)? {
+            self.class_declaration(env)?;
+        } else if self.match_token(TokenType::Fun)? {
             self.fun_declaration(env)?;
         } else if self.match_token(TokenType::Var)? {
             self.var_declaration(env)?;
@@ -460,9 +462,35 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
+    fn class_declaration(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        self.consume(TokenType::Identifier, "Expect class name.")?;
+        let name_constant = self.identifier_constant(self.previous, env);
+        self.declare_variable()?;
+
+        self.emit_bytes(OpCode::OpClass, name_constant);
+        self.define_variable(name_constant);
+
+        self.consume(TokenType::LeftBrance, "Expect '{' before class body.")?;
+        self.consume(TokenType::RightBrace, "Expect '}' after class body.")?;
+        Ok(())
+    }
+
     fn call(&mut self, _: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         let arg_count = self.argument_list(env)?;
         self.emit_bytes(OpCode::OpCall, arg_count as u8);
+        Ok(())
+    }
+
+    fn dot(&mut self, can_assign: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        self.consume(TokenType::Identifier, "Expect property name after '.'.")?;
+        let name = self.identifier_constant(self.previous, env);
+
+        if can_assign && self.match_token(TokenType::Equal)? {
+            self.expression(env)?;
+            self.emit_bytes(OpCode::OpSetProperty, name);
+        } else {
+            self.emit_bytes(OpCode::OpGetProperty, name);
+        }
         Ok(())
     }
 
@@ -808,6 +836,11 @@ impl<'s> Compiler<'s> {
             TokenType::LeftParen => ParseRule {
                 prefix: Some(Self::grouping),
                 infix: Some(Self::call),
+                precedence: Precedence::Call,
+            },
+            TokenType::Dot => ParseRule {
+                prefix: None,
+                infix: Some(Self::dot),
                 precedence: Precedence::Call,
             },
             TokenType::Minus => ParseRule {

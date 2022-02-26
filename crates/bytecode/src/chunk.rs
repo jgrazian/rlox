@@ -15,6 +15,8 @@ pub enum OpCode {
     OpSetGlobal,
     OpGetUpvalue,
     OpSetUpvalue,
+    OpGetProperty,
+    OpSetProperty,
     OpEqual,
     OpGreater,
     OpLess,
@@ -32,6 +34,7 @@ pub enum OpCode {
     OpClosure,
     OpCloseUpvalue,
     OpReturn,
+    OpClass,
 }
 
 impl From<u8> for OpCode {
@@ -131,6 +134,8 @@ impl Chunk {
             OpCode::OpSetGlobal => const_instr(self, "OP_SET_GLOBAL", offset, heap),
             OpCode::OpGetUpvalue => byte_instr(self, "OP_GET_UPVALUE", offset),
             OpCode::OpSetUpvalue => byte_instr(self, "OP_SET_UPVALUE", offset),
+            OpCode::OpGetProperty => const_instr(self, "OP_GET_PROPERTY", offset, heap),
+            OpCode::OpSetProperty => const_instr(self, "OP_SET_PROPERTY", offset, heap),
             OpCode::OpEqual => single_instr("OP_EQUAL"),
             OpCode::OpGreater => single_instr("OP_GREATER"),
             OpCode::OpLess => single_instr("OP_LESS"),
@@ -186,6 +191,7 @@ impl Chunk {
             }
             OpCode::OpCloseUpvalue => single_instr("OP_CLOSE_UPVALUE"),
             OpCode::OpReturn => single_instr("OP_RETURN"),
+            OpCode::OpClass => const_instr(self, "OP_CLASS", offset, heap),
         };
 
         let line = if offset > 0 && self.lines[offset] == self.lines[offset - 1] {

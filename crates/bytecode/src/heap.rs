@@ -102,7 +102,7 @@ impl Heap {
         }
 
         match &obj.value {
-            ObjType::String(..) | ObjType::Native(..) => {}
+            ObjType::String(..) | ObjType::Native(..) | ObjType::Null | ObjType::Class(..) => {}
             ObjType::Upvalue(upvalue) => match upvalue.state {
                 UpvalueState::Open(..) => {}
                 UpvalueState::Closed(value) => {
@@ -120,7 +120,12 @@ impl Heap {
                     mark(self, *upvalue, gray_stack);
                 }
             }
-            ObjType::Null => {}
+            ObjType::Instance(inst) => {
+                mark(self, inst.klass, gray_stack);
+                for (_k, v) in inst.fields.iter() {
+                    mark_value(self, *v, gray_stack);
+                }
+            }
         }
     }
 

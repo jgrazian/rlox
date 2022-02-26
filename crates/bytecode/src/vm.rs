@@ -246,6 +246,40 @@ impl<'h> Vm {
                         }
                     }
                 }
+                OpGetProperty => {
+                    if !env.heap[self.frame().peek(&self.stack, 0).as_obj()].is_instance() {
+                        return self.runtime_error("Only instances have properties.", env);
+                    }
+
+                    let instance =
+                        env.heap[self.frame().peek(&self.stack, 0).as_obj()].as_instance();
+                    let name = env.heap[self.frame().read_constant(&env.heap).as_obj()].as_string();
+
+                    if let Some(prop_name) = instance.fields.get(name) {
+                        self.frame().pop(&self.stack);
+                        self.frame().push(&self.stack, *prop_name);
+                    } else {
+                        let msg = format!("Undefined property '{}'.", name);
+                        return self.runtime_error(msg, env);
+                    }
+                }
+                OpSetProperty => {
+                    if !env.heap[self.frame().peek(&self.stack, 1).as_obj()].is_instance() {
+                        return self.runtime_error("Only instances have properties.", env);
+                    }
+
+                    let name = env.heap[self.frame().read_constant(&env.heap).as_obj()]
+                        .as_string()
+                        .to_owned();
+                    let instance =
+                        env.heap[self.frame().peek(&self.stack, 1).as_obj()].as_instance_mut();
+                    let ins_value = self.frame().peek(&self.stack, 0);
+
+                    instance.fields.insert(name, ins_value);
+                    let value = self.frame().pop(&self.stack);
+                    self.frame().pop(&self.stack);
+                    self.frame().push(&self.stack, value);
+                }
                 OpEqual => {
                     let b = self.frame().pop(&self.stack);
                     let a = self.frame().pop(&self.stack);
@@ -372,6 +406,13 @@ impl<'h> Vm {
                     }
                     self.frame().push(&self.stack, result);
                 }
+                OpClass => {
+                    let name = env.heap[self.frame().read_constant(&env.heap).as_obj()]
+                        .as_string()
+                        .to_owned();
+                    let value = Value::Obj(env.alloc(Obj::class(name), self));
+                    self.frame().push(&self.stack, value);
+                }
             }
         }
     }
@@ -388,6 +429,12 @@ impl<'h> Vm {
     ) -> Result<(), LoxError> {
         match callee {
             Value::Obj(o) => match &env.heap[o].value {
+                ObjType::Class(_klass) => {
+                    let instance = Obj::instance(o);
+                    let value = Value::Obj(env.alloc(instance, self));
+                    self.stack[self.frame().slot_top.get() - arg_count - 1].set(value);
+                    return Ok(());
+                }
                 ObjType::Closure(_closure) => {
                     self.call(o, arg_count, env)?;
                     return Ok(());

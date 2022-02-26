@@ -1,4 +1,5 @@
 use std::cell::Cell;
+use std::collections::HashMap;
 use std::fmt::{self, Debug};
 
 use crate::chunk::Chunk;
@@ -12,6 +13,8 @@ pub enum ObjType {
     Native(ObjNative),
     Closure(ObjClosure),
     Upvalue(ObjUpvalue),
+    Class(ObjClass),
+    Instance(ObjInstance),
 }
 
 impl Default for ObjType {
@@ -29,6 +32,8 @@ impl Debug for ObjType {
             ObjType::Native(..) => write!(f, "fn<native>"),
             ObjType::Closure(c) => write!(f, "{:?}", c),
             ObjType::Upvalue(v) => write!(f, "{:?}", v),
+            ObjType::Class(c) => write!(f, "{:?}", c),
+            ObjType::Instance(i) => write!(f, "{:?}", i),
         }
     }
 }
@@ -75,6 +80,23 @@ impl Obj {
         }
     }
 
+    pub fn class<S: Into<String>>(name: S) -> Self {
+        Self {
+            value: ObjType::Class(ObjClass { name: name.into() }),
+            is_marked: Cell::new(false),
+        }
+    }
+
+    pub fn instance(klass: HeapKey) -> Self {
+        Self {
+            value: ObjType::Instance(ObjInstance {
+                klass,
+                fields: HashMap::new(),
+            }),
+            is_marked: Cell::new(false),
+        }
+    }
+
     pub fn as_string(&self) -> &String {
         match &self.value {
             ObjType::String(s) => s,
@@ -117,14 +139,36 @@ impl Obj {
         }
     }
 
+    pub fn as_instance(&self) -> &ObjInstance {
+        match &self.value {
+            ObjType::Instance(i) => i,
+            _ => panic!("Expected instance"),
+        }
+    }
+
+    pub fn as_instance_mut(&mut self) -> &mut ObjInstance {
+        match &mut self.value {
+            ObjType::Instance(i) => i,
+            _ => panic!("Expected instance"),
+        }
+    }
+
     pub fn is_string(&self) -> bool {
         match &self.value {
             ObjType::String(_) => true,
             _ => false,
         }
     }
+
+    pub fn is_instance(&self) -> bool {
+        match &self.value {
+            ObjType::Instance(_) => true,
+            _ => false,
+        }
+    }
 }
 
+// TODO: Obj display needs to show correctly for closures and Instances
 impl fmt::Display for Obj {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match &self.value {
@@ -140,6 +184,8 @@ impl fmt::Display for Obj {
             ObjType::Closure(c) => fmt::Display::fmt(&format!("<closure {}>", c.function.0), f),
             ObjType::Null => fmt::Display::fmt("null", f),
             ObjType::Upvalue(..) => write!(f, "upvalue"),
+            ObjType::Class(c) => fmt::Display::fmt(&c.name, f),
+            ObjType::Instance(i) => fmt::Display::fmt(&format!("{} instance", i.klass.0), f),
         }
     }
 }
@@ -210,6 +256,17 @@ impl Default for ObjUpvalue {
             state: UpvalueState::Open(0),
         }
     }
+}
+
+#[derive(Debug, Default, Clone, PartialEq)]
+pub struct ObjClass {
+    name: String,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjInstance {
+    pub klass: HeapKey,
+    pub fields: HashMap<String, Value>,
 }
 
 pub struct ObjNative {
