@@ -1,5 +1,6 @@
 use std::cell::Cell;
 use std::collections::{BinaryHeap, HashMap};
+use std::fmt::Pointer;
 use std::io::Write;
 use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -253,15 +254,17 @@ impl<'h> Vm {
 
                     let instance =
                         env.heap[self.frame().peek(&self.stack, 0).as_obj()].as_instance();
-                    let name = env.heap[self.frame().read_constant(&env.heap).as_obj()].as_string();
+                    let name = env.heap[self.frame().read_constant(&env.heap).as_obj()]
+                        .as_string()
+                        .to_owned();
 
-                    if let Some(prop_name) = instance.fields.get(name) {
+                    if let Some(prop_name) = instance.fields.get(&name) {
                         self.frame().pop(&self.stack);
                         self.frame().push(&self.stack, *prop_name);
-                    } else {
-                        let msg = format!("Undefined property '{}'.", name);
-                        return self.runtime_error(msg, env);
+                        continue;
                     }
+
+                    self.bind_method(instance.klass, &name, env)?;
                 }
                 OpSetProperty => {
                     if !env.heap[self.frame().peek(&self.stack, 1).as_obj()].is_instance() {
@@ -413,6 +416,14 @@ impl<'h> Vm {
                     let value = Value::Obj(env.alloc(Obj::class(name), self));
                     self.frame().push(&self.stack, value);
                 }
+                OpMethod => {
+                    self.define_method(
+                        env.heap[self.frame().read_constant(&env.heap).as_obj()]
+                            .as_string()
+                            .to_owned(),
+                        env,
+                    )?;
+                }
             }
         }
     }
@@ -429,6 +440,7 @@ impl<'h> Vm {
     ) -> Result<(), LoxError> {
         match callee {
             Value::Obj(o) => match &env.heap[o].value {
+                ObjType::BoundMethod(b) => return self.call(b.method, arg_count, env),
                 ObjType::Class(_klass) => {
                     let instance = Obj::instance(o);
                     let value = Value::Obj(env.alloc(instance, self));
@@ -515,6 +527,40 @@ impl<'h> Vm {
         self.stack[0] = Cell::new(value);
         self.globals.insert(name.into(), self.stack[0].get());
         self.stack[0] = Cell::new(Value::Nil);
+    }
+
+    fn define_method(&mut self, name: String, env: &mut InnerEnv<'h>) -> Result<(), LoxError> {
+        let method = self.frame().peek(&self.stack, 0);
+        let klass = env.heap[self.frame().peek(&self.stack, 1).as_obj()].as_class_mut();
+
+        klass.methods.insert(name, method);
+
+        self.frame().pop(&self.stack);
+        Ok(())
+    }
+
+    fn bind_method(
+        &mut self,
+        klass: HeapKey,
+        name: &String,
+        env: &mut InnerEnv<'h>,
+    ) -> Result<(), LoxError> {
+        let klass_obj = env.heap[klass].as_class();
+        let method = klass_obj
+            .methods
+            .get(name)
+            .ok_or(LoxError::RuntimeError(format!(
+                "Undefined property '{}'.",
+                name
+            )))?;
+
+        let obj = Obj::bound_method(self.frame().peek(&self.stack, 0), method.as_obj());
+        let bound_method = env.alloc(obj, self);
+
+        self.frame().pop(&self.stack);
+        self.frame().push(&self.stack, Value::Obj(bound_method));
+
+        Ok(())
     }
 
     fn capture_upvalue(&mut self, local: usize, env: &mut InnerEnv<'h>) -> HeapKey {

@@ -35,6 +35,7 @@ pub enum OpCode {
     OpCloseUpvalue,
     OpReturn,
     OpClass,
+    OpMethod,
 }
 
 impl From<u8> for OpCode {
@@ -59,9 +60,9 @@ pub struct Chunk {
 impl Chunk {
     pub fn new() -> Self {
         Self {
-            code: Vec::with_capacity(8),
-            lines: Vec::with_capacity(8),
-            constants: Vec::with_capacity(8),
+            code: Vec::with_capacity(32),
+            lines: Vec::with_capacity(32),
+            constants: Vec::with_capacity(32),
         }
     }
 
@@ -192,6 +193,7 @@ impl Chunk {
             OpCode::OpCloseUpvalue => single_instr("OP_CLOSE_UPVALUE"),
             OpCode::OpReturn => single_instr("OP_RETURN"),
             OpCode::OpClass => const_instr(self, "OP_CLASS", offset, heap),
+            OpCode::OpMethod => const_instr(self, "OP_METHOD", offset, heap),
         };
 
         let line = if offset > 0 && self.lines[offset] == self.lines[offset - 1] {

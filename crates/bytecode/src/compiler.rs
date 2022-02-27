@@ -464,14 +464,30 @@ impl<'s> Compiler<'s> {
 
     fn class_declaration(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         self.consume(TokenType::Identifier, "Expect class name.")?;
+        let class_name = self.previous;
         let name_constant = self.identifier_constant(self.previous, env);
         self.declare_variable()?;
 
         self.emit_bytes(OpCode::OpClass, name_constant);
         self.define_variable(name_constant);
 
+        self.named_variable(class_name, false, env)?;
         self.consume(TokenType::LeftBrance, "Expect '{' before class body.")?;
+        while !self.check_token(TokenType::RightBrace) && !self.check_token(TokenType::Eof) {
+            self.method(env)?;
+        }
         self.consume(TokenType::RightBrace, "Expect '}' after class body.")?;
+        self.emit_byte(OpCode::OpPop);
+        Ok(())
+    }
+
+    fn method(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        self.consume(TokenType::Identifier, "Expect method name.")?;
+        let name_constant = self.identifier_constant(self.previous, env);
+
+        let ty = FunctionType::Function;
+        self.function(env)?;
+        self.emit_bytes(OpCode::OpMethod, name_constant);
         Ok(())
     }
 

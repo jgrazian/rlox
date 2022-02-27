@@ -15,6 +15,7 @@ pub enum ObjType {
     Upvalue(ObjUpvalue),
     Class(ObjClass),
     Instance(ObjInstance),
+    BoundMethod(ObjBoundMethod),
 }
 
 impl Default for ObjType {
@@ -34,6 +35,7 @@ impl Debug for ObjType {
             ObjType::Upvalue(v) => write!(f, "{:?}", v),
             ObjType::Class(c) => write!(f, "{:?}", c),
             ObjType::Instance(i) => write!(f, "{:?}", i),
+            ObjType::BoundMethod(b) => write!(f, "{:?}", b),
         }
     }
 }
@@ -82,7 +84,10 @@ impl Obj {
 
     pub fn class<S: Into<String>>(name: S) -> Self {
         Self {
-            value: ObjType::Class(ObjClass { name: name.into() }),
+            value: ObjType::Class(ObjClass {
+                name: name.into(),
+                methods: HashMap::new(),
+            }),
             is_marked: Cell::new(false),
         }
     }
@@ -93,6 +98,13 @@ impl Obj {
                 klass,
                 fields: HashMap::new(),
             }),
+            is_marked: Cell::new(false),
+        }
+    }
+
+    pub fn bound_method(reciever: Value, method: HeapKey) -> Self {
+        Self {
+            value: ObjType::BoundMethod(ObjBoundMethod { reciever, method }),
             is_marked: Cell::new(false),
         }
     }
@@ -136,6 +148,20 @@ impl Obj {
         match &mut self.value {
             ObjType::Upvalue(u) => u,
             _ => panic!("Expected upvalue"),
+        }
+    }
+
+    pub fn as_class(&self) -> &ObjClass {
+        match &self.value {
+            ObjType::Class(c) => c,
+            _ => panic!("Expected class"),
+        }
+    }
+
+    pub fn as_class_mut(&mut self) -> &mut ObjClass {
+        match &mut self.value {
+            ObjType::Class(c) => c,
+            _ => panic!("Expected class"),
         }
     }
 
@@ -186,6 +212,9 @@ impl fmt::Display for Obj {
             ObjType::Upvalue(..) => write!(f, "upvalue"),
             ObjType::Class(c) => fmt::Display::fmt(&c.name, f),
             ObjType::Instance(i) => fmt::Display::fmt(&format!("{} instance", i.klass.0), f),
+            ObjType::BoundMethod(b) => {
+                fmt::Display::fmt(&format!("{} bound method", b.method.0), f)
+            }
         }
     }
 }
@@ -261,12 +290,19 @@ impl Default for ObjUpvalue {
 #[derive(Debug, Default, Clone, PartialEq)]
 pub struct ObjClass {
     name: String,
+    pub methods: HashMap<String, Value>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
 pub struct ObjInstance {
     pub klass: HeapKey,
     pub fields: HashMap<String, Value>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct ObjBoundMethod {
+    pub reciever: Value,
+    pub method: HeapKey,
 }
 
 pub struct ObjNative {
