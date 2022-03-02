@@ -366,6 +366,13 @@ impl<'h> Vm {
                     let arg_count = self.frame().read_byte(&env.heap) as usize;
                     self.call_value(self.frame().peek(&self.stack, arg_count), arg_count, env)?;
                 }
+                OpInvoke => {
+                    let method = env.heap[self.frame().read_constant(&env.heap).as_obj()]
+                        .as_string()
+                        .to_owned();
+                    let arg_count = self.frame().read_byte(&env.heap) as usize;
+                    self.invoke(&method, arg_count, env)?;
+                }
                 OpClosure => {
                     let function = self.frame().read_constant(&env.heap).as_obj();
                     let upvalue_count = env.heap[function].as_function().upvalue_count;
@@ -508,6 +515,43 @@ impl<'h> Vm {
         self.frames.push(frame);
 
         Ok(())
+    }
+
+    fn invoke(
+        &mut self,
+        name: &String,
+        arg_count: usize,
+        env: &mut InnerEnv<'h>,
+    ) -> Result<(), LoxError> {
+        let reviever = self.frame().peek(&self.stack, arg_count);
+
+        let instance = if env.heap[reviever.as_obj()].is_instance() {
+            env.heap[reviever.as_obj()].as_instance()
+        } else {
+            return self.runtime_error(format!("Only instances have methods."), env);
+        };
+
+        if let Some(value) = instance.fields.get(name) {
+            self.stack[self.frame().slot_top.get() - arg_count - 1].set(*value);
+            return self.call(value.as_obj(), arg_count, env);
+        }
+
+        self.invoke_from_class(instance.klass, name, arg_count, env)
+    }
+
+    fn invoke_from_class(
+        &mut self,
+        klass: HeapKey,
+        name: &String,
+        arg_count: usize,
+        env: &mut InnerEnv<'h>,
+    ) -> Result<(), LoxError> {
+        let method = env.heap[klass].as_class().methods.get(name);
+        if let Some(method) = method {
+            self.call(method.as_obj(), arg_count, env)
+        } else {
+            self.runtime_error(format!("Undefined property '{}'.", name), env)
+        }
     }
 
     fn runtime_error<M: Into<String>>(

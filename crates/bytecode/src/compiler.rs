@@ -538,6 +538,10 @@ impl<'s> Compiler<'s> {
         if can_assign && self.match_token(TokenType::Equal)? {
             self.expression(env)?;
             self.emit_bytes(OpCode::OpSetProperty, name);
+        } else if self.match_token(TokenType::LeftParen)? {
+            let arg_count = self.argument_list(env)?;
+            self.emit_bytes(OpCode::OpInvoke, name);
+            self.emit_byte(arg_count as u8);
         } else {
             self.emit_bytes(OpCode::OpGetProperty, name);
         }

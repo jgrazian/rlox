@@ -31,6 +31,7 @@ pub enum OpCode {
     OpJumpIfFalse,
     OpLoop,
     OpCall,
+    OpInvoke,
     OpClosure,
     OpCloseUpvalue,
     OpReturn,
@@ -122,6 +123,17 @@ impl Chunk {
             (3, s)
         }
 
+        fn invoke_instr(chunk: &Chunk, name: &str, offset: usize) -> (usize, String) {
+            let constant = chunk.code[offset + 1] as usize;
+            let arg_count = chunk.code[offset + 2] as usize;
+
+            let s = format!(
+                "{:<16} ({} args) {:>4}",
+                name, arg_count, chunk.constants[constant]
+            );
+            (3, s)
+        }
+
         let (inc, repr) = match op {
             OpCode::OpConstant => const_instr(self, "OP_CONST", offset, heap),
             OpCode::OpNil => single_instr("OP_NIL"),
@@ -151,6 +163,7 @@ impl Chunk {
             OpCode::OpJumpIfFalse => jump_instr(self, "OP_JUMP_IF_FALSE", offset, 1),
             OpCode::OpLoop => jump_instr(self, "OP_LOOP", offset, -1),
             OpCode::OpCall => byte_instr(self, "OP_CALL", offset),
+            OpCode::OpInvoke => invoke_instr(self, "OP_INVOKE", offset),
             OpCode::OpClosure => {
                 let mut offset = offset + 1;
                 let constant = self.code[offset] as usize;
