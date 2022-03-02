@@ -46,6 +46,9 @@ struct ParseRule<'s> {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
+struct ClassCompiler;
+
+#[derive(Debug, Default, Clone, Copy)]
 struct Local<'s> {
     name: Token<'s>,
     depth: isize,
@@ -69,6 +72,7 @@ pub struct Compiler<'s> {
     current: Token<'s>,
 
     functions: Vec<ObjFunction>,
+    classes: Vec<ClassCompiler>,
     upvalues: Vec<Vec<Upvalue>>,
     locals: Vec<Vec<Local<'s>>>,
     scope_depth: usize,
@@ -94,6 +98,7 @@ impl<'s> Compiler<'s> {
             previous: Token::default(),
             current: Token::default(),
             functions: Vec::with_capacity(16),
+            classes: Vec::with_capacity(16),
             upvalues: Vec::with_capacity(8),
             locals: Vec::with_capacity(8),
             scope_depth: 0,
@@ -289,6 +294,13 @@ impl<'s> Compiler<'s> {
         if self.match_token(TokenType::Semicolon)? {
             self.emit_return();
         } else {
+            if self.compiling_function().ty == FunctionType::Initializer {
+                match self.error("Cannot return a value from an initializer.") {
+                    Some(e) => return Err(e),
+                    None => {}
+                }
+            }
+
             self.expression(env)?;
             self.consume(TokenType::Semicolon, "Expect ';' after return value.")?;
             self.emit_byte(OpCode::OpReturn);
@@ -407,16 +419,29 @@ impl<'s> Compiler<'s> {
     fn fun_declaration(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         let global = self.parse_variable("Expect function name.", env)?;
         self.mark_initialized();
-        self.function(env)?;
+        self.function(FunctionType::Function, env)?;
         self.define_variable(global);
         Ok(())
     }
 
-    fn function(&mut self, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+    fn function(&mut self, ty: FunctionType, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
         self.functions
-            .push(ObjFunction::named(self.previous.lexeme));
+            .push(ObjFunction::named(self.previous.lexeme, ty));
+        let local_token = if ty != FunctionType::Function {
+            Token {
+                ty: TokenType::This,
+                lexeme: "this",
+                line: self.previous.line,
+            }
+        } else {
+            Token {
+                ty: TokenType::Nil,
+                lexeme: "",
+                line: self.previous.line,
+            }
+        };
         self.locals.push(vec![Local {
-            name: self.previous,
+            name: local_token,
             depth: self.scope_depth as isize,
             is_captured: false,
         }]);
@@ -471,6 +496,8 @@ impl<'s> Compiler<'s> {
         self.emit_bytes(OpCode::OpClass, name_constant);
         self.define_variable(name_constant);
 
+        self.classes.push(ClassCompiler);
+
         self.named_variable(class_name, false, env)?;
         self.consume(TokenType::LeftBrance, "Expect '{' before class body.")?;
         while !self.check_token(TokenType::RightBrace) && !self.check_token(TokenType::Eof) {
@@ -478,6 +505,8 @@ impl<'s> Compiler<'s> {
         }
         self.consume(TokenType::RightBrace, "Expect '}' after class body.")?;
         self.emit_byte(OpCode::OpPop);
+
+        self.classes.pop();
         Ok(())
     }
 
@@ -485,8 +514,13 @@ impl<'s> Compiler<'s> {
         self.consume(TokenType::Identifier, "Expect method name.")?;
         let name_constant = self.identifier_constant(self.previous, env);
 
-        let ty = FunctionType::Function;
-        self.function(env)?;
+        let ty = if self.previous.lexeme == "init" {
+            FunctionType::Initializer
+        } else {
+            FunctionType::Method
+        };
+
+        self.function(ty, env)?;
         self.emit_bytes(OpCode::OpMethod, name_constant);
         Ok(())
     }
@@ -633,7 +667,12 @@ impl<'s> Compiler<'s> {
     }
 
     fn emit_return(&mut self) {
-        self.emit_byte(OpCode::OpNil);
+        if self.compiling_function().ty == FunctionType::Initializer {
+            self.emit_bytes(OpCode::OpGetLocal, 0);
+        } else {
+            self.emit_byte(OpCode::OpNil);
+        }
+
         self.emit_byte(OpCode::OpReturn);
     }
 
@@ -816,6 +855,17 @@ impl<'s> Compiler<'s> {
         Ok(())
     }
 
+    fn this_(&mut self, _: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        if self.classes.is_empty() {
+            match self.error("Cannot use 'this' outside of a class.") {
+                Some(e) => return Err(e),
+                None => {}
+            }
+        }
+
+        self.variable(false, env)
+    }
+
     fn mark_initialized(&mut self) {
         if self.scope_depth == 0 {
             return;
@@ -881,6 +931,11 @@ impl<'s> Compiler<'s> {
             },
             TokenType::False | TokenType::True | TokenType::Nil => ParseRule {
                 prefix: Some(Self::literal),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            TokenType::This => ParseRule {
+                prefix: Some(Self::this_),
                 infix: None,
                 precedence: Precedence::None,
             },

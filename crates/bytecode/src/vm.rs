@@ -440,11 +440,26 @@ impl<'h> Vm {
     ) -> Result<(), LoxError> {
         match callee {
             Value::Obj(o) => match &env.heap[o].value {
-                ObjType::BoundMethod(b) => return self.call(b.method, arg_count, env),
+                ObjType::BoundMethod(b) => {
+                    self.stack[self.frame().slot_top.get() - arg_count - 1].set(b.reciever);
+                    return self.call(b.method, arg_count, env);
+                }
                 ObjType::Class(_klass) => {
+                    let initializer = _klass.methods.get("init").copied();
+
                     let instance = Obj::instance(o);
                     let value = Value::Obj(env.alloc(instance, self));
                     self.stack[self.frame().slot_top.get() - arg_count - 1].set(value);
+
+                    if let Some(initializer) = initializer {
+                        return self.call(initializer.as_obj(), arg_count, env);
+                    } else if arg_count != 0 {
+                        return self.runtime_error(
+                            format!("Expected 0 arguments but got {}.", arg_count),
+                            env,
+                        );
+                    }
+
                     return Ok(());
                 }
                 ObjType::Closure(_closure) => {

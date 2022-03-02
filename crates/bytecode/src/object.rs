@@ -219,9 +219,11 @@ impl fmt::Display for Obj {
     }
 }
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum FunctionType {
     Function,
+    Method,
+    Initializer,
     Script,
 }
 
@@ -251,12 +253,12 @@ impl ObjFunction {
         }
     }
 
-    pub fn named<S: Into<String>>(name: S) -> Self {
+    pub fn named<S: Into<String>>(name: S, ty: FunctionType) -> Self {
         Self {
             arity: 0,
             chunk: Chunk::new(),
             name: Some(name.into()),
-            ty: FunctionType::Function,
+            ty,
             upvalue_count: 0,
         }
     }

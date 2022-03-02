@@ -56,3 +56,4 @@ test_file!(test_class_01, "tests/class_01.lox");
 test_file!(test_class_02, "tests/class_02.lox");
 test_file!(test_class_03, "tests/class_03.lox");
 test_file!(test_class_04, "tests/class_04.lox");
+test_file!(test_class_05, "tests/class_05.lox");
