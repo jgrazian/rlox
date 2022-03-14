@@ -36,6 +36,7 @@ pub enum OpCode {
     OpCloseUpvalue,
     OpReturn,
     OpClass,
+    OpInherit,
     OpMethod,
 }
 
@@ -206,6 +207,7 @@ impl Chunk {
             OpCode::OpCloseUpvalue => single_instr("OP_CLOSE_UPVALUE"),
             OpCode::OpReturn => single_instr("OP_RETURN"),
             OpCode::OpClass => const_instr(self, "OP_CLASS", offset, heap),
+            OpCode::OpInherit => single_instr("OP_INHERIT"),
             OpCode::OpMethod => const_instr(self, "OP_METHOD", offset, heap),
         };
 
