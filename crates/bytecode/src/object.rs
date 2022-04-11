@@ -192,6 +192,13 @@ impl Obj {
             _ => false,
         }
     }
+
+    pub fn is_class(&self) -> bool {
+        match &self.value {
+            ObjType::Class(..) => true,
+            _ => false,
+        }
+    }
 }
 
 // TODO: Obj display needs to show correctly for closures and Instances

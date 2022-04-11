@@ -46,7 +46,9 @@ struct ParseRule<'s> {
 }
 
 #[derive(Debug, Default, Clone, Copy)]
-struct ClassCompiler;
+struct ClassCompiler {
+    has_superclass: bool,
+}
 
 #[derive(Debug, Default, Clone, Copy)]
 struct Local<'s> {
@@ -496,17 +498,28 @@ impl<'s> Compiler<'s> {
         self.emit_bytes(OpCode::OpClass, name_constant);
         self.define_variable(name_constant);
 
-        self.classes.push(ClassCompiler);
+        self.classes.push(ClassCompiler {
+            has_superclass: false,
+        });
 
         if self.match_token(TokenType::Less)? {
             self.consume(TokenType::Identifier, "Expect superclass name.")?;
-            self.variable(false, env);
+            self.variable(false, env)?;
 
             if &class_name == &self.previous {
                 return Err(self.error("A class cannot inherit from itself."))?;
             }
 
-            self.named_variable(class_name, false, env);
+            self.begin_scope();
+            self.classes.last_mut().unwrap().has_superclass = true;
+            self.add_local(Token {
+                ty: TokenType::Super,
+                lexeme: "super",
+                line: 0,
+            })?;
+            self.define_variable(0);
+
+            self.named_variable(class_name, false, env)?;
             self.emit_byte(OpCode::OpInherit);
         }
 
@@ -516,6 +529,11 @@ impl<'s> Compiler<'s> {
             self.method(env)?;
         }
         self.consume(TokenType::RightBrace, "Expect '}' after class body.")?;
+
+        if self.classes.last().unwrap().has_superclass {
+            self.end_scope();
+        }
+
         self.emit_byte(OpCode::OpPop);
 
         self.classes.pop();
@@ -882,6 +900,45 @@ impl<'s> Compiler<'s> {
         self.variable(false, env)
     }
 
+    fn super_(&mut self, _: bool, env: &mut InnerEnv<'s>) -> Result<(), LoxError> {
+        if self.classes.is_empty() {
+            match self.error("Can't use 'super' outside of a class.") {
+                Some(e) => return Err(e),
+                None => {}
+            }
+        } else if !self.classes.last().unwrap().has_superclass {
+            match self.error("Can't use 'super' in a class with no superclass.") {
+                Some(e) => return Err(e),
+                None => {}
+            }
+        }
+
+        self.consume(TokenType::Dot, "Expect '.' after 'super'.")?;
+        self.consume(TokenType::Identifier, "Expect superclass method name.")?;
+        let name = self.identifier_constant(self.previous, env);
+
+        self.named_variable(
+            Token {
+                lexeme: "this",
+                ty: TokenType::This,
+                line: 0,
+            },
+            false,
+            env,
+        )?;
+        self.named_variable(
+            Token {
+                lexeme: "super",
+                ty: TokenType::Super,
+                line: 0,
+            },
+            false,
+            env,
+        )?;
+        self.emit_bytes(OpCode::OpGetSuper, name);
+        Ok(())
+    }
+
     fn mark_initialized(&mut self) {
         if self.scope_depth == 0 {
             return;
@@ -947,6 +1004,11 @@ impl<'s> Compiler<'s> {
             },
             TokenType::False | TokenType::True | TokenType::Nil => ParseRule {
                 prefix: Some(Self::literal),
+                infix: None,
+                precedence: Precedence::None,
+            },
+            TokenType::Super => ParseRule {
+                prefix: Some(Self::super_),
                 infix: None,
                 precedence: Precedence::None,
             },

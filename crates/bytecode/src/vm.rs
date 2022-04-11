@@ -117,7 +117,7 @@ impl<'h> Vm {
                     .iter()
                     .for_each(|v| eprint!("[ {:>3} ]", v.get().print(&env.heap)));
                 eprint!("\n");
-                let ip = self.ip.get();
+                let ip = self.frames.last().unwrap().ip.get();
                 let op = function.chunk.code[ip].into();
                 eprintln!("{}", function.chunk.debug_op(ip, &op, &env.heap).1);
             }
@@ -221,6 +221,14 @@ impl<'h> Vm {
                     let value = self.pop();
                     self.pop();
                     self.push(value);
+                }
+                OpGetSuper => {
+                    let name = env.heap[self.read_constant(&env.heap).as_obj()]
+                        .as_string()
+                        .to_owned();
+                    let superclass = self.pop().as_obj();
+
+                    self.bind_method(superclass, &name, env)?;
                 }
                 OpEqual => {
                     let b = self.pop();
@@ -343,6 +351,18 @@ impl<'h> Vm {
                     let name = self.string(&env.heap).to_owned();
                     let value = Value::Obj(env.alloc(Obj::class(name), self));
                     self.push(value);
+                }
+                OpInherit => {
+                    let superclass = self.peek(1).as_obj();
+                    if !env.heap[superclass].is_class() {
+                        return self.runtime_error("Superclass must be a class.", env);
+                    }
+
+                    let superclass_methods = env.heap[superclass].as_class().methods.clone();
+                    let subclass = env.heap[self.peek(0).as_obj()].as_class_mut();
+                    subclass.methods.extend(superclass_methods);
+
+                    self.pop();
                 }
                 OpMethod => {
                     self.define_method(self.string(&env.heap).to_owned(), env)?;
