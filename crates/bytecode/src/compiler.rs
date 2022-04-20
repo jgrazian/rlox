@@ -535,7 +535,6 @@ impl<'s> Compiler<'s> {
         }
 
         self.emit_byte(OpCode::OpPop);
-
         self.classes.pop();
         Ok(())
     }
@@ -827,7 +826,7 @@ impl<'s> Compiler<'s> {
     }
 
     fn resolve_upvalue(&mut self, name: Token, depth: usize) -> Result<i8, LoxError> {
-        if depth <= 1 {
+        if depth < 1 {
             return Ok(-1);
         }
 

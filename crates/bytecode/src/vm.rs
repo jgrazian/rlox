@@ -223,12 +223,13 @@ impl<'h> Vm {
                     self.push(value);
                 }
                 OpGetSuper => {
-                    let name = env.heap[self.read_constant(&env.heap).as_obj()]
-                        .as_string()
-                        .to_owned();
-                    let superclass = self.pop().as_obj();
+                    return self.runtime_error("No superclasses! Sorry :)", env);
+                    // let name = env.heap[self.read_constant(&env.heap).as_obj()]
+                    //     .as_string()
+                    //     .to_owned();
+                    // let superclass = self.pop().as_obj();
 
-                    self.bind_method(superclass, &name, env)?;
+                    // self.bind_method(superclass, &name, env)?;
                 }
                 OpEqual => {
                     let b = self.pop();
@@ -429,7 +430,9 @@ impl<'h> Vm {
     fn pop(&self) -> Value {
         let frame = self.frame();
         frame.slot_top.set(frame.slot_top.get() - 1);
-        self.stack[frame.slot_base + frame.slot_top.get()].get()
+        let r = self.stack[frame.slot_base + frame.slot_top.get()].get();
+        self.stack[frame.slot_base + frame.slot_top.get()].set(Value::Nil);
+        r
     }
 
     fn peek(&self, distance: usize) -> Value {

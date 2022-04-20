@@ -16,10 +16,6 @@ class Cruller < Doughnut {
   }
 }
 
-var d = Doughnut();
-/// Finish with sprinkles
-d.finish();
-
 var c = Cruller();
 /// Finish with icing
-c.finish();
+c.finish("aaa");
