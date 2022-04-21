@@ -1,4 +1,3 @@
-
 * {
     margin: 0;
     padding: 0;
@@ -23,7 +22,6 @@ h1 {
     font-weight: 200;
     font-size: 48px;
     text-align: center;
-    margin-top: 20px;
 }
 
 h2 {
@@ -43,6 +41,30 @@ section {
     max-width: 800px;
     margin: 50px auto;
     padding: 20px;
+}
+
+select {
+    width: 100px;
+    margin-right: 0px;
+    margin-left: auto;
+    border: 1px solid #ccc;
+    border-radius: 4px;
+    box-sizing: border-box;
+}
+
+input {
+    -webkit-appearance: none;
+    appearance: none;
+    padding: 16px 30px;
+    border-radius: 16px;
+    background: radial-gradient(circle 12px, white 100%, transparent calc(100% + 1px)) #ccc -14px;
+    transition: 0.3s ease-in-out;
+    margin: 10px;
+}
+
+:checked {
+    background-color: #4CAF50;
+    background-position: 14px;
 }
 
 .editor {
@@ -72,7 +94,7 @@ section {
     display: flex;
 }
 
-.controls > div:first-child > a {
+.controls>div:first-child>a {
     display: inline-block;
     width: 40px;
 }
@@ -95,7 +117,7 @@ section {
     margin-top: 35px;
 }
 
-.getting-started .more > span {
+.getting-started .more>span {
     display: inline-block;
     width: 30px;
     height: 6px;
@@ -105,15 +127,15 @@ section {
     transition: transform 300ms ease-in-out;
 }
 
-.getting-started .more > span:nth-child(2) {
+.getting-started .more>span:nth-child(2) {
     transform: rotate(-15deg) translateX(-4px);
 }
 
-.getting-started .more.on > span {
+.getting-started .more.on>span {
     transform: rotate(0deg) translateX(4px);
 }
 
-.getting-started .more.on > span:nth-child(2) {
+.getting-started .more.on>span:nth-child(2) {
     transform: rotate(0deg) translateX(-4px);
 }
 
@@ -133,13 +155,12 @@ section {
 .btn-run {
     background-color: #4CAF50;
     padding: 10px 20px;
-    margin-top: 10px;
-    margin-bottom: 10px;
-    margin-right: 50%;
+    margin-right: 20px;
     width: 120px;
 }
 
-.btn:focus, .btn:focus::after {
+.btn:focus,
+.btn:focus::after {
     outline: none;
 }
 
@@ -209,7 +230,7 @@ section {
     tab-size: 4;
 }
 
-@media only screen and (max-width: 720px) {
+@media only screen and (max-width: 940px) {
     .split-editor {
         flex-direction: column;
         height: 70vh;

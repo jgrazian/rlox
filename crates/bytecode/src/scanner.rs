@@ -258,6 +258,16 @@ pub struct Token<'s> {
     pub line: usize,
 }
 
+impl Default for Token<'_> {
+    fn default() -> Self {
+        Token {
+            ty: TokenType::Error,
+            lexeme: "",
+            line: 0,
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TokenType {
     LeftParen,

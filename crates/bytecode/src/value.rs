@@ -1,40 +1,28 @@
 use std::fmt;
 
-use crate::object::{Function, Obj};
+use crate::heap::{Heap, HeapKey};
+use crate::object::ObjType;
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Value {
-    Bool(bool),
     Nil,
+    Bool(bool),
     Number(f64),
-    Obj(Box<Obj>),
+    Obj(HeapKey),
 }
 
 impl Value {
     pub fn as_number(&self) -> f64 {
         match self {
-            Self::Number(v) => *v,
+            Self::Number(n) => *n,
             _ => panic!("Value is not a number"),
         }
     }
 
-    pub fn as_string(&self) -> &str {
+    pub fn as_obj(&self) -> HeapKey {
         match self {
-            Self::Obj(o) => match &**o {
-                Obj::String(s) => s,
-                _ => panic!("Obj is not a string"),
-            },
-            _ => panic!("Value is not a obj"),
-        }
-    }
-
-    pub fn as_function(&self) -> &Function {
-        match self {
-            Self::Obj(o) => match &**o {
-                Obj::Function(f) => f,
-                _ => panic!("Obj is not a function"),
-            },
-            _ => panic!("Value is not a obj"),
+            Self::Obj(o) => *o,
+            _ => panic!("Value is not an object"),
         }
     }
 
@@ -45,10 +33,29 @@ impl Value {
         }
     }
 
-    pub fn is_string(&self) -> bool {
+    pub fn print(&self, heap: &Heap) -> String {
         match self {
-            Self::Obj(o) => match **o {
-                Obj::String(_) => true,
+            Self::Nil => "nil".to_string(),
+            Self::Bool(true) => "true".to_string(),
+            Self::Bool(false) => "false".to_string(),
+            Self::Number(n) => format!("{}", n),
+            Self::Obj(i) => match heap.get(*i) {
+                None => "invalid".to_string(),
+                Some(o) => format!("{}", o),
+            },
+        }
+    }
+
+    pub fn equal(left: &Self, right: &Self, heap: &Heap) -> bool {
+        match (left, right) {
+            (Self::Nil, Self::Nil) => true,
+            (Self::Bool(l), Self::Bool(r)) => l == r,
+            (Self::Number(l), Self::Number(r)) => l == r,
+            (Self::Obj(l), Self::Obj(r)) => match (heap.get(*l), heap.get(*r)) {
+                (Some(l), Some(r)) => match (&l.value, &r.value) {
+                    (ObjType::String(l), ObjType::String(r)) => l == r,
+                    _ => false,
+                },
                 _ => false,
             },
             _ => false,
@@ -59,11 +66,20 @@ impl Value {
 impl fmt::Display for Value {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Self::Bool(true) => fmt::Display::fmt("true", f),
-            Self::Bool(false) => fmt::Display::fmt("false", f),
-            Self::Nil => fmt::Display::fmt("nil", f),
-            Self::Number(n) => fmt::Display::fmt(n, f),
-            Self::Obj(o) => fmt::Display::fmt(o, f),
+            Self::Nil => write!(f, "nil"),
+            Self::Bool(true) => write!(f, "true"),
+            Self::Bool(false) => write!(f, "false"),
+            Self::Number(n) => write!(f, "{}", n),
+            Self::Obj(i) => write!(f, "Obj<{}>", i.0),
+        }
+    }
+}
+
+impl Into<HeapKey> for Value {
+    fn into(self) -> HeapKey {
+        match self {
+            Self::Obj(i) => i,
+            _ => panic!("Value is not an object pointer."),
         }
     }
 }

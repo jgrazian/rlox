@@ -10,3 +10,5 @@ edition = "2021"
 [features]
 debug_trace_execution = []
 debug_print_code = []
+debug_log_gc = []
+debug_stress_gc = []

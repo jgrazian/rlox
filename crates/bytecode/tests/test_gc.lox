@@ -1,0 +1,12 @@
+var global = "string";
+{
+  var local = "another";
+  /// stringanother
+  print global + local;
+}
+
+{
+    var i = "more alloc";
+    /// stringmore alloc
+    print global + i;
+}

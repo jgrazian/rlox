@@ -6,27 +6,32 @@ use std::process;
 
 mod chunk;
 mod compiler;
+mod enviroment;
 mod error;
+mod heap;
 mod object;
 mod scanner;
 mod value;
 mod vm;
 
 pub fn repl() -> Result<(), Box<dyn Error>> {
+    let mut stdout = io::stdout();
     let reader = io::stdin();
     eprintln!("rlox\ntype 'quit' to exit");
-    let mut vm = vm::Vm::new();
+
+    let mut buffer = String::new();
+    let env = enviroment::Enviroment::new();
 
     loop {
         eprint!("> ");
         io::stdout().flush()?;
-        let mut buffer = String::new();
+        buffer.clear();
         reader.read_line(&mut buffer)?;
         if buffer == "quit\n" {
             break;
         }
 
-        match vm.interpret(&buffer) {
+        match env.interpret(&buffer, &mut stdout) {
             Err(e) => eprintln!("{}", e),
             Ok(()) => (),
         }
@@ -34,9 +39,21 @@ pub fn repl() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-pub fn run_file(path: &str) -> Result<(), Box<dyn Error>> {
+pub fn run_file<F: Write>(path: &str, out_stream: &mut F) -> Result<(), Box<dyn Error>> {
     let file = fs::read_to_string(path)?;
-    let result = vm::Vm::new().interpret(&file);
+    let result = enviroment::Enviroment::new().interpret(&file, out_stream);
+
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            eprint!("{}", e);
+            process::exit(65);
+        }
+    }
+}
+
+pub fn run<F: Write>(source: &str, out_stream: &mut F) -> Result<(), Box<dyn Error>> {
+    let result = enviroment::Enviroment::new().interpret(source, out_stream);
 
     match result {
         Ok(_) => Ok(()),
