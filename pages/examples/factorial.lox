@@ -1,0 +1,9 @@
+fun fac(n) {
+    var fac = 1;
+    for (var i = 1; i <= n; i = i + 1) {
+        fac = fac * i;
+    }
+    return fac;
+}
+
+print fac(4);

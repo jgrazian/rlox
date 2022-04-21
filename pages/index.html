@@ -14,9 +14,24 @@
 
 <body>
     <main>
-        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr;">
-            <button class="btn btn-run">Run -></button>
+        <div style="display: grid; grid-template-columns: 1fr 1fr 1fr; align-items: center;">
+            <div style="display: flex; flex-direction: row; align-items: center;">
+                <button class="btn btn-run">Run -></button>
+                <div style="display: flex; flex-direction: row; align-items: center;">
+                    <div>Tree-Walk</div>
+                    <input type="checkbox" id="interpreter-type">
+                    <div>Bytecode</div>
+                </div>
+            </div>
             <h1>rlox</h1>
+            <select name="Example Script" id="example-select">
+                <option value="factorial">Factorial</option>
+                <option value="fib" selected>Fibonacci</option>
+                <option value="for">For Loop</option>
+                <option value="hello_world">Hello World</option>
+                <option value="if_else">If-Else</option>
+                <option value="while">While Loop</option>
+            </select>
         </div>
         <div class="split-editor">
             <div class="code language-lox hljs" data-gramm="false" spellcheck="false"
@@ -28,87 +43,103 @@
                 contenteditable="false"></div>
         </div>
     </main>
+</body>
 
-    <script type="module">
-        import { CodeJar } from './codejar.js'
-        import { withLineNumbers } from './linenumbers.js'
-        import init, { run } from './rlox/rlox_lib.js'
 
-        // Setup WASM
-        await init();
+<script type="module">
+    import { CodeJar } from './codejar.js'
+    import { withLineNumbers } from './linenumbers.js'
+    import init, { run, InterpreterType } from './rlox/rlox_lib.js'
 
-        let lox = () => {
-            return {
-                case_insensitive: true,
-                keywords: {
-                    keyword: 'fun class var for if else while print return or and != == > < >= <=',
-                    literal: 'false true nil this super'
+    function selectCallback() {
+        var optionValue = document.getElementById("example-select").value;
+        console.log(optionValue);
+        fetch("./examples/" + optionValue + ".lox")
+            .then(response => response.text().then(text => jar.updateCode(text)));
+    }
+
+    document.getElementById("example-select").addEventListener("change", selectCallback);
+
+    // Setup WASM
+    await init();
+
+    let lox = () => {
+        return {
+            case_insensitive: true,
+            keywords: {
+                keyword: 'fun class var for if else while print return or and != == > < >= <=',
+                literal: 'false true nil this super'
+            },
+            contains: [
+                {
+                    scope: 'string',
+                    begin: '"', end: '"'
                 },
-                contains: [
-                    {
-                        scope: 'string',
-                        begin: '"', end: '"'
-                    },
-                    {
-                        scope: 'variable',
-                        begin: /(?<=var )\w+/,
-                        end: /(?=\s*=)/,
-                    },
-                    {
-                        scope: 'title.class',
-                        begin: /(?<=class )\w+/,
-                        end: /(?=\s*[\{<])/,
-                    },
-                    {
-                        scope: 'title.function',
-                        begin: /(?<=fun )\w+/,
-                        end: /(?=\s*())/,
-                    },
-                    hljs.COMMENT(
-                        '//', // begin
-                        '//', // end
-                    )
-                ]
-            }
+                {
+                    scope: 'variable',
+                    begin: /(?<=var )\w+/,
+                    end: /(?=\s*=)/,
+                },
+                {
+                    scope: 'title.class',
+                    begin: /(?<=class )\w+/,
+                    end: /(?=\s*[\{<])/,
+                },
+                {
+                    scope: 'title.function',
+                    begin: /(?<=fun )\w+/,
+                    end: /(?=\s*())/,
+                },
+                hljs.COMMENT(
+                    '//', // begin
+                    '//', // end
+                )
+            ]
         }
-        hljs.registerLanguage("lox", lox)
+    }
+    hljs.registerLanguage("lox", lox)
 
-        const editor = document.querySelector('.split-editor .code')
-        const preview = document.querySelector('.split-editor .preview')
+    const editor = document.querySelector('.split-editor .code')
+    const preview = document.querySelector('.split-editor .preview')
 
-        const highlight = editor => {
-            // highlight.js does not trim old tags,
-            // let's do it by this hack.
-            editor.textContent = editor.textContent
-            hljs.highlightElement(editor)
-        }
+    const highlight = editor => {
+        // highlight.js does not trim old tags,
+        // let's do it by this hack.
+        editor.textContent = editor.textContent
+        hljs.highlightElement(editor)
+    }
 
-        const jar = CodeJar(editor, highlight, {
-            indentOn: /[(\[{]$/
-        })
+    const jar = CodeJar(editor, highlight, {
+        indentOn: /[(\[{]$/
+    })
 
-        jar.updateCode(`fun fib(n) {
-\tif (n < 2) return n;
-\treturn fib(n - 1) + fib(n - 2); 
+    jar.updateCode(`fun fac(n) {
+    var fac = 1;
+    for (var i = 1; i <= n; i = i + 1) {
+        fac = fac * i;
+    }
+    return fac;
 }
 
-print fib(10);`)
+print fac(4);`)
 
-        jar.onUpdate(code => {
-            localStorage.setItem('code', code)
-        })
+    jar.onUpdate(code => {
+        localStorage.setItem('code', code)
+    })
 
-        // Handle button
-        const btn = document.querySelector('.btn')
-        btn.addEventListener('click', () => {
-            localStorage.setItem('code', editor.textContent)
-            // jar_out.updateCode(run(jar.toString()))
-            console.log(run(jar.toString()))
-            preview.textContent = run(jar.toString())
-        })
+    // Handle button
+    const btn = document.querySelector('.btn')
+    btn.addEventListener('click', () => {
+        localStorage.setItem('code', editor.textContent)
 
-    </script>
-    <script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.4.0/highlight.min.js"></script>
-</body>
+        var interpreter = document.getElementById("interpreter-type").checked ? InterpreterType.Bytecode : InterpreterType.TreeWalk;
+        var res = run(jar.toString(), interpreter);
+
+        console.log(res)
+        preview.textContent = res
+    })
+
+</script>
+<script src="//cdnjs.cloudflare.com/ajax/libs/highlight.js/11.4.0/highlight.min.js"></script>
 
 </html>

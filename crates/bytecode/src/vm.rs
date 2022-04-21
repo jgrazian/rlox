@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::collections::{BinaryHeap, HashMap};
 use std::io::Write;
+#[cfg(not(target_family = "wasm"))]
 use std::time::{SystemTime, UNIX_EPOCH};
 
 #[allow(unused_imports)]
@@ -658,10 +659,15 @@ impl<'h> Vm {
     }
 }
 
+#[cfg(not(target_family = "wasm"))]
 fn clock_native(_arg_count: usize, _args: &[Cell<Value>]) -> Value {
     let time = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
         .as_secs_f64();
     Value::Number(time)
+}
+#[cfg(target_family = "wasm")]
+fn clock_native(_arg_count: usize, _args: &[Cell<Value>]) -> Value {
+    Value::Number(42.0)
 }

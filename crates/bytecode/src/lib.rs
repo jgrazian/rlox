@@ -51,3 +51,15 @@ pub fn run_file<F: Write>(path: &str, out_stream: &mut F) -> Result<(), Box<dyn 
         }
     }
 }
+
+pub fn run<F: Write>(source: &str, out_stream: &mut F) -> Result<(), Box<dyn Error>> {
+    let result = enviroment::Enviroment::new().interpret(source, out_stream);
+
+    match result {
+        Ok(_) => Ok(()),
+        Err(e) => {
+            eprint!("{}", e);
+            process::exit(65);
+        }
+    }
+}
