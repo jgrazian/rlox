@@ -2,15 +2,22 @@
 /* eslint-disable */
 /**
 * @param {string} source
+* @param {number} interpreter
 * @returns {string}
 */
-export function run(source: string): string;
+export function run(source: string, interpreter: number): string;
+/**
+*/
+export enum InterpreterType {
+  TreeWalk,
+  Bytecode,
+}
 
 export type InitInput = RequestInfo | URL | Response | BufferSource | WebAssembly.Module;
 
 export interface InitOutput {
   readonly memory: WebAssembly.Memory;
-  readonly run: (a: number, b: number, c: number) => void;
+  readonly run: (a: number, b: number, c: number, d: number) => void;
   readonly __wbindgen_add_to_stack_pointer: (a: number) => number;
   readonly __wbindgen_malloc: (a: number) => number;
   readonly __wbindgen_realloc: (a: number, b: number, c: number) => number;

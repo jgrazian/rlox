@@ -1,7 +1,7 @@
 
 let wasm;
 
-let cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
+const cachedTextDecoder = new TextDecoder('utf-8', { ignoreBOM: true, fatal: true });
 
 cachedTextDecoder.decode();
 
@@ -19,7 +19,7 @@ function getStringFromWasm0(ptr, len) {
 
 let WASM_VECTOR_LEN = 0;
 
-let cachedTextEncoder = new TextEncoder('utf-8');
+const cachedTextEncoder = new TextEncoder('utf-8');
 
 const encodeString = (typeof cachedTextEncoder.encodeInto === 'function'
     ? function (arg, view) {
@@ -81,14 +81,15 @@ function getInt32Memory0() {
 }
 /**
 * @param {string} source
+* @param {number} interpreter
 * @returns {string}
 */
-export function run(source) {
+export function run(source, interpreter) {
     try {
         const retptr = wasm.__wbindgen_add_to_stack_pointer(-16);
-        var ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
-        var len0 = WASM_VECTOR_LEN;
-        wasm.run(retptr, ptr0, len0);
+        const ptr0 = passStringToWasm0(source, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        wasm.run(retptr, ptr0, len0, interpreter);
         var r0 = getInt32Memory0()[retptr / 4 + 0];
         var r1 = getInt32Memory0()[retptr / 4 + 1];
         return getStringFromWasm0(r0, r1);
@@ -97,6 +98,10 @@ export function run(source) {
         wasm.__wbindgen_free(r0, r1);
     }
 }
+
+/**
+*/
+export const InterpreterType = Object.freeze({ TreeWalk:0,"0":"TreeWalk",Bytecode:1,"1":"Bytecode", });
 
 async function load(module, imports) {
     if (typeof Response === 'function' && module instanceof Response) {

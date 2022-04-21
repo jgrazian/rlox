@@ -1,0 +1,9 @@
+var i = 0;
+if (false) {
+    print "true";
+} else {
+    print "false";
+    i = 10;
+}
+
+print i;
